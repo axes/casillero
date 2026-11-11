@@ -1,10 +1,11 @@
 # Casillero
 
-Entran juntos a la bodega, roban vino y tienen que salir antes del 666. La primera incursión la cubre una vela: el primer 6 la apaga y no bloquea un dado. Después se baja más hondo, la botella vale más y el Diablo ya está escuchando. El grupo necesita **20 puntos** entre todos. Gana quien más aseguró en su colección, si el Diablo no lo manchó en la última incursión.
+Entran con un solo dado. Cada 6 deja una marca; a la tercera aparece el Diablo. Las cartas de la bodega prenden o apagan el ruido: más dados, más seises. La primera bajada es más quieta; más abajo el vino vale más y ya hay una marca. Hay que juntar **14 puntos** entre todos. Gana quien más aseguró, si el Diablo no lo manchó en la última incursión.
 
-Este repositorio es el primer prototipo digital de las reglas v0.2. La mesa de verdad sigue siendo el lugar donde se afina. El título es de trabajo: «Casillero del Diablo» es marca registrada de Viña Concha y Toro.
+Este repositorio es el prototipo digital de las reglas v0.3, jugado encima del v0.2. La mesa de verdad sigue siendo el lugar donde se afina. El título es de trabajo: «Casillero del Diablo» es marca registrada de Viña Concha y Toro.
 
-Las reglas completas están en [docs/casillero-reglas-v0.2.md](docs/casillero-reglas-v0.2.md).
+- Reglas v0.3: [docs/casillero-reglas-v0.3.md](docs/casillero-reglas-v0.3.md)
+- Reglas v0.2, por si hay que comparar: [docs/casillero-reglas-v0.2.md](docs/casillero-reglas-v0.2.md)
 
 ## Cómo correrlo
 
@@ -15,7 +16,9 @@ npm install
 npm run dev
 ```
 
-Se abre en `http://localhost:5173`. Es una mesa local, en el mismo computador: se pasan el celular o se sientan juntos frente a la pantalla. No hay servidor ni cuentas.
+Se abre en `http://localhost:5173`. Es una mesa local: se pasan el celular para el voto secreto. La semilla de arriba repite la misma bodega y las mismas tiradas.
+
+El botón **Sonido / Bajo / Mudo** (arriba a la izquierda) cambia el volumen. El audio es procedural, con la Web Audio API: no hay samples. Si el sistema pide «reducir movimiento», las ramas y la vela se mueven mucho menos.
 
 Otros comandos:
 
@@ -28,40 +31,36 @@ npm run build  # typecheck + Vite
 
 ## Cómo se juega
 
-1. Elijan de 3 a 6 nombres y, si quieren repetir la misma partida, una semilla. Si la dejan vacía, se arma una al azar y queda escrita arriba durante la partida.
-2. La partida tiene tres incursiones: **Las tinajas** (×1, con vela), **Las cavas** (×2) y **La sacristía** (×3, ya entra un 6 bloqueado).
-3. En cada saqueo, quien tiene el turno roba **una** botella a su botín expuesto y tira solo los dados que siguen libres. Todo 6 natural se bloquea y no se vuelve a tirar en esa incursión.
-4. La amenaza se lee en los 6 bloqueados: duerme, escuchó algo, está cerca, aparece. Con tres 6 despierta el Diablo.
-5. Si no aparece, cada persona que sigue dentro vota en secreto: **seguir** o **salir**. Pásense el celular; el voto no se muestra hasta que votaron todos.
-6. La salida segura pide unanimidad. Ahí todo el botín expuesto pasa a la colección segura.
-7. Si alguien quiere seguir, quienes votaron salir eligen: **huir** (se mezcla el botín, se pierde una carta al azar y el resto queda seguro; esa persona queda fuera hasta la próxima incursión) o **quedarse y arriesgar**.
-8. Si aparece el Diablo, quienes seguían dentro pierden lo expuesto. Lo ya asegurado no se toca. En la tercera incursión, además, quedan manchados y no pueden ganar.
-9. Al cierre se ve qué se aseguró, qué se perdió y, en este prototipo, que no hay botellas misteriosas. Después del recuento: si la ofrenda no llega a 20, no gana nadie. Si llega, gana quien tenga más puntos entre quienes pueden ganar. Un empate se comparte.
+1. Elijan de 3 a 6 nombres y, si quieren, una semilla.
+2. Tres incursiones, siempre partiendo con **un dado**: **Las tinajas** (×1, cero marcas), **Las cavas** (×2, una marca) y **La sacristía** (×3, una marca).
+3. En cada saqueo, quien tiene el turno roba la carta de arriba.
+   - Si es **botella**, va a su botín expuesto.
+   - Si es **evento**, se resuelve al tiro. Ruido y Barrica cae suman dados (máximo 3). Silencio y, a veces, Vela los quitan (mínimo 1). Vela apaga una marca si hay. Eco le saca una botella a quien tiene dos o más expuestas. Encrucijada deja elegir: otra botella y un dado, o pasar. Pisada suma una marca y puede despertar al Diablo sin tirar. Trasiego cambia el botín expuesto con quien más tiene.
+4. Si el Diablo no apareció con la carta, se tiran los dados que hay en juego. Si sale **algún** 6, se suma **una** marca, aunque varios dados muestren 6.
+5. Tres marcas: aparece el Diablo. La bodega se oscurece con cada marca (velas, ramas, bichos, crujidos; en dos marcas, un latido). Al empezar otra incursión el ambiente vuelve al nivel de las marcas de entrada.
+6. Si no aparece, votan en secreto quienes siguen dentro: **seguir** o **salir**. La salida segura pide unanimidad. Si no la hay, quien votó salir **huye** (pierde 1 al azar) o se queda.
+7. Quienes seguían dentro y los pilla el Diablo pierden lo expuesto. Lo ya asegurado no se toca. En la tercera incursión, además, quedan manchados y no pueden ganar.
+8. Al cierre no hay botellas misteriosas. Si entre todos no juntan 14 en la colección segura, no gana nadie. Si juntan, gana quien tenga más entre quienes pueden. El empate se comparte.
 
-En la mesa, el botín expuesto (rojo, «en juego») y la colección segura (borde dorado, «a salvo») van separados a propósito. Solo lo seguro cuenta para la ofrenda y para ganar.
+En la mesa, el botín expuesto y la colección segura van separados. Solo lo seguro cuenta para la ofrenda y para ganar. Los 12 eventos se reponen al empezar cada incursión; las botellas perdidas no vuelven.
 
 ## Cómo está armado
 
-- `src/config.ts` tiene los números del prototipo: dados, vela, multiplicadores, ofrenda, pena de huida. La vista los lee de ahí.
-- `src/engine/` es el motor puro. El azar es una semilla (mulberry32); la misma semilla repite la bodega y las tiradas. No dibuja nada.
-- `src/ui/` es la mesa en PixiJS 8 (`new Application()` y después `await app.init()`), con animación de la carta y del 666. Los textos están en castellano de Chile.
-- `tests/` cubre el bloqueo de los 6, la vela, el 666, la unanimidad, la huida, la curva de las tres incursiones y el recuento.
+- `src/config.ts` tiene los números de v0.3: dados, marcas, eventos, ofrenda. La vista no los repite.
+- `src/engine/` es el motor puro, con semilla. No dibuja ni suena.
+- `src/ui/` es la mesa en PixiJS 8 (`new Application()` y después `await app.init()`). La atmósfera (vigneta, vela, ramas) y el audio viven ahí, separados de las reglas.
+- `tests/` cubre el tope de una marca por tirada, el umbral, el piso y el techo de dados, cada evento, la reposición del mazo, las marcas de entrada, la unanimidad, la huida y el recuento.
 
 ## Decisiones que el diseño puede cambiar
 
-El motor tuvo que cerrar huecos que las reglas v0.2 no escriben. Si alguna de estas no era la intención, se cambia en la config o en el motor y se vuelve a probar.
-
-1. **Varios 6 con la vela todavía encendida.** La vela perdona exactamente un dado: el primer 6 de esa tirada. Los otros 6 del mismo tiro sí se bloquean. Por eso 6-6-6 con la vela y cero dados trabados deja dos 6, no al Diablo. Calza con «con la vela encendida es imposible el 666» en la curva publicada (se entra con cero 6).
-2. **El 6 que se comió la vela no queda bloqueado.** Se puede volver a tirar. El siguiente 6, ya a oscuras, se bloquea como cualquier otro.
-3. **«El Diablo vuelve a dormir, salvo lo indicado en la regla 6».** En la lista numerada, la 6 es la huida y la 8 es la curva. Leí la excepción como la tercera incursión, que entra con un 6 ya bloqueado (amenaza «escuchó algo»), no como un Diablo que sigue despierto entre incursiones. Cada incursión parte sin botín expuesto y con todo el mundo otra vez dentro. La mancha solo existe si el 666 cae en la última.
-4. **Voto secreto y huida.** Primero todos votan salir o seguir, sin ver el voto de los demás. Si hay unanimidad, salen a salvo. Si no, un voto de salir no saca a nadie solo: esa persona elige huir (pierde 1 al azar) o quedarse. Quien queda solo y vota salir hace unanimidad consigo mismo y asegura todo; huir en ese caso sería peor y el motor no se lo ofrece.
-5. **Una botella por saqueo, para quien tiene el turno.** No roba cada jugador. El turno rota entre quienes siguen dentro. La primera persona de cada incursión también rota un asiento (`rotateFirstActorEachIncursion`).
-6. **Huida con pocas cartas.** Se mezcla el botín con la semilla y se pierden las primeras cartas de esa mezcla, hasta la pena (1 en v0.2). Si hay menos cartas que la pena, se pierden todas. Si no hay botín, la huida no cuesta y esa persona igual queda fuera.
-7. **Orden de las huidas** en la misma decisión: desde quien acaba de robar, en el sentido de la mesa.
-8. **Ofrenda.** Suma la colección segura de todas las personas, también de las manchadas. Lo expuesto no suma. Bajo 20 no gana nadie. Si la ofrenda está pero todos los que podían ganar están manchados, tampoco. Si el máximo se empata, incluso en 0, el empate se comparte.
-9. **La bodega tiene 72 botellas** con cepas chilenas. En v0.2 no hay poderes ni colecciones de cepa: el valor es solo el multiplicador de la incursión en que se robó. Las perdidas van al descarte y no vuelven (`discardLostBottles`). Si el mazo se acaba, lo expuesto se asegura y la incursión cierra. No está en las reglas; con 72 cartas casi no ocurre.
-10. **Botellas misteriosas.** La config trae `mysteryBottles: 0`. El cierre lo dice. Si más adelante el número sube, el motor revela esa cantidad desde el mazo al terminar la incursión, las muestra y las manda al descarte. No puntúan.
-11. **`unanimousLeave: false`** (no es el v0.2). Un voto de salir asegura el botín de esa persona y la saca, sin pena y sin esperar al resto.
-12. **`soloSaqueoCap`.** En v0.2 es `null` (sin tope: quien queda solo decide cuánto arriesga). Si fuera un número, al llegar a ese tope de saqueos en solitario lo expuesto se asegura y la incursión termina.
-13. **Dobles y triples** no hacen nada mientras `specialDiceEffects` sea false.
-14. **La cara mala es siempre el 6** y el dado es un d6. `dice` en la config es la cantidad de dados, no las caras.
+1. **Ofrenda 14.** El archivo la deja como sugerencia y pregunta abierta. El diseñador la confirmó para este prototipo. 20 sigue en el documento como la alternativa que casi nadie califica.
+2. **Eco: qué botella se pierde.** No está dicho. Se mezcla el botín de cada persona (desde quien acaba de robar, en el sentido de la mesa) y se va la primera de esa mezcla al descarte. No vuelve a la bodega.
+3. **Trasiego empatado.** Si dos tienen la misma cantidad, y es la mayor por encima de quien roba, cambia con la primera en el sentido de la mesa.
+4. **Encrucijada.** «Tomar» saca la primera botella que quede en el mazo y deja los eventos en su orden. Si no queda ninguna, el botón no se ofrece. Después de elegir, igual se tira.
+5. **Pisada que llega a 3** no tira los dados. La incursión termina ahí.
+6. **Tope de dados y de marcas.** Si un efecto pediría bajar de 1 o subir de 3, se queda en el límite y no pasa nada más. Una tirada suma como máximo `maxCountersPerRoll` (1): varios 6 cuentan como una marca.
+7. **`candleAbsorbsFirstSix` y `startLocked`** siguen en la config, en false y ceros, para no arrastrar la v0.2. El motor no los usa. La vela es solo la carta.
+8. **Dobles y triples** no hacen nada, aunque `specialDiceEffects` estuviera en true: v0.3 no apila otro sistema de caos.
+9. **Eventos que sobran** se botan al empezar la incursión siguiente y entra un mazo fresco de 12, mezclado con las botellas que aún no se han robado.
+10. **Voto y huida** siguen como en v0.2: salir sin unanimidad no saca a nadie; después se huye o se queda. Quien queda solo y vota salir asegura todo.
+11. **Sonido.** No hay archivos de audio. Ratas, crujidos, susurros, latido y el drone del 666 se arman con osciladores y ruido en el navegador. El primer toque en la pantalla lo habilita.

@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { chooseFlight, splitFlight, stepRaid } from '../src/engine'
+import { chooseFlight, splitFlight } from '../src/engine'
 import type { GameConfig } from '../src/engine'
 import { gameConfig, rngFromSeed } from '../src/engine'
-import { fleePending, ready, voteAll } from './helpers'
+import { facedRaid, fleePending, ready, voteAll } from './helpers'
 
 function fleeRosaAfterTwoBottles(seed = 5, config: GameConfig = gameConfig) {
   let state = ready(undefined, seed, config)
-  state = stepRaid(state, [1, 2, 3])
+  state = facedRaid(state, 1)
   state = voteAll(state, 'continue')
-  state = stepRaid(state, [1, 2, 3])
+  state = facedRaid(state, 1)
   state = voteAll(state, 'continue')
-  state = stepRaid(state, [1, 2, 3])
+  state = facedRaid(state, 1)
   state = voteAll(state, 'continue')
-  state = stepRaid(state, [1, 2, 3])
+  state = facedRaid(state, 1)
   const exposed = state.players[0]?.exposed.map((bottle) => bottle.id) ?? []
   state = voteAll(state, (playerId) => (playerId === 0 ? 'exit' : 'continue'))
   expect(state.phase).toBe('flight')
@@ -42,7 +42,7 @@ describe('huida individual', () => {
   })
 
   it('huir sin botín no cuesta carta y deja fuera de la incursión', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, (playerId) => (playerId === 2 ? 'exit' : 'continue'))
     state = fleePending(state, () => 'flee')
     expect(state.players[2]?.inside).toBe(false)
@@ -52,12 +52,12 @@ describe('huida individual', () => {
   })
 
   it('con una sola carta, la huida se la lleva completa', () => {
-    let state = stepRaid(ready(), [4, 5, 1])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, (playerId) => (playerId === 0 ? 'exit' : 'continue'))
     state = chooseFlight(state, 0, 'flee')
     expect(state.players[0]?.secured).toHaveLength(0)
     expect(state.discard).toHaveLength(1)
-    expect(state.discard[0]?.id).toBe(state.lastRaid?.drawn.id)
+    expect(state.discard[0]?.id).toBe(state.lastRaid?.card.id)
   })
 
   it('la pena se lee de la config', () => {
@@ -71,9 +71,9 @@ describe('huida individual', () => {
 
   it('la mezcla es estable para la misma semilla', () => {
     const bottles = [
-      { id: 'botella-1', cepa: 'País', drawnInIncursion: 0 },
-      { id: 'botella-2', cepa: 'Syrah', drawnInIncursion: 0 },
-      { id: 'botella-3', cepa: 'Carmenère', drawnInIncursion: 0 },
+      { kind: 'bottle' as const, id: 'botella-1', cepa: 'País', drawnInIncursion: 0 },
+      { kind: 'bottle' as const, id: 'botella-2', cepa: 'Syrah', drawnInIncursion: 0 },
+      { kind: 'bottle' as const, id: 'botella-3', cepa: 'Carmenère', drawnInIncursion: 0 },
     ]
     const once = splitFlight(rngFromSeed(11), bottles, 1)
     const twice = splitFlight(rngFromSeed(11), bottles, 1)
@@ -83,10 +83,10 @@ describe('huida individual', () => {
   })
 
   it('quien queda solo y vota salir asegura todo: no es una huida', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, (playerId) => (playerId === 0 ? 'continue' : 'exit'))
     state = fleePending(state, () => 'flee')
-    state = stepRaid(state, [1, 2, 3])
+    state = facedRaid(state, 1)
     state = voteAll(state, 'exit')
     expect(state.phase).toBe('summary')
     expect(state.currentRecord?.reason).toBe('safe-exit')

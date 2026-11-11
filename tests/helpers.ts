@@ -39,14 +39,32 @@ export function fleePending(state: GameState, choiceFor: (playerId: number) => F
   return next
 }
 
-/** Cierra la incursión actual con `raids` saqueos sin seises y salida unánime en el último. */
+/** Deja una botella arriba para que el saqueo no dispare un evento. */
+export function putBottleFirst(state: GameState): GameState {
+  const index = state.deck.findIndex((card) => card.kind === 'bottle')
+  if (index <= 0) return state
+  const card = state.deck[index]
+  if (!card) return state
+  return {
+    ...state,
+    deck: [card, ...state.deck.slice(0, index), ...state.deck.slice(index + 1)],
+  }
+}
+
+/** Saqueo de botella con todos los dados en la misma cara. 1 no marca; 6 marca. */
+export function facedRaid(state: GameState, face = 1): GameState {
+  const topped = putBottleFirst(state)
+  const rolls = Array.from({ length: topped.diceCount }, () => face)
+  return stepRaid(topped, rolls)
+}
+
+/** Cierra la incursión actual con `raids` botellas sin seises y salida unánime en el último. */
 export function bankIncursion(state: GameState, raids: number): GameState {
   let next = state
   if (next.phase === 'intro') next = confirmIntro(next)
   for (let index = 0; index < raids; index += 1) {
-    const free = next.dice.filter((die) => !die.locked).length
-    const rolls = Array.from({ length: free }, (_, face) => (face % 5) + 1)
-    next = stepRaid(next, rolls)
+    next = facedRaid(next, 1)
+    if (next.phase !== 'vote') throw new Error(`El saqueo no llegó a votar: ${next.phase}`)
     next = voteAll(next, index === raids - 1 ? 'exit' : 'continue')
   }
   if (next.phase !== 'summary') {

@@ -1,16 +1,22 @@
-export { BODEGA_SIZE, CEPAS, gameConfig } from '../config'
-export type { GameConfig } from '../config'
-export { freeDiceCount, lockedCount, resolveDice, threatBand } from './dice'
-export type { DiceResolution } from './dice'
+export { CEPAS, EVENT_IDS, gameConfig } from '../config'
+export type { EventSpec, GameConfig } from '../config'
+export { eventTotal, freshEvents, isEvent, makeBottleDeck, restockDeck } from './deck'
+export { clampDice, countersFromRoll, threatBand } from './dice'
+export { adjustDice, pullFirstBottle, resolveEvent } from './events'
 export { splitFlight } from './flight'
 export {
   acknowledgeDevil,
+  beginRaid,
   castVote,
+  chooseCrossroads,
   chooseFlight,
   confirmIntro,
   continueAfterSummary,
   createGame,
+  hasBottle,
   performRaid,
+  performRoll,
+  resolveRoll,
   resolveVotes,
   stepRaid,
   voteFor,
@@ -21,9 +27,13 @@ export { bottleValue, offeringPoints, pilePoints, scoreGame } from './score'
 export type {
   Bottle,
   CastVote,
+  CrossroadsChoice,
+  DeckCard,
   Departure,
-  Die,
   EndReason,
+  EventCard,
+  EventId,
+  EventResolution,
   FinalScore,
   FlightChoice,
   GameState,

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { castVote, chooseFlight, createGame, performRaid, resolveVotes, stepRaid } from '../src/engine'
+import { castVote, chooseFlight, createGame, performRaid, resolveVotes } from '../src/engine'
 import type { GameConfig } from '../src/engine'
 import { gameConfig } from '../src/engine'
-import { fleePending, ready, voteAll } from './helpers'
+import { facedRaid, fleePending, ready, voteAll } from './helpers'
 
 describe('unanimidad', () => {
   it('si todos los que siguen dentro votan salir, aseguran el botín', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, 'exit')
     expect(state.phase).toBe('summary')
     expect(state.currentRecord?.reason).toBe('safe-exit')
@@ -17,7 +17,7 @@ describe('unanimidad', () => {
   })
 
   it('un solo voto de seguir impide la salida segura', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, (playerId) => (playerId === 1 ? 'continue' : 'exit'))
     expect(state.phase).toBe('flight')
     state = fleePending(state, () => 'stay')
@@ -29,12 +29,12 @@ describe('unanimidad', () => {
   })
 
   it('quien ya está fuera no vota, y el resto sí puede salir unánime', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, (playerId) => (playerId === 1 ? 'exit' : 'continue'))
     state = chooseFlight(state, 1, 'flee')
     expect(state.players[1]?.inside).toBe(false)
     expect(state.phase).toBe('ready')
-    state = stepRaid(state, [2, 3, 4])
+    state = facedRaid(state, 1)
     expect(() => castVote(state, 1, 'exit')).toThrow(/no vota/)
     state = castVote(state, state.activePlayerId === 2 ? 2 : 0, 'exit')
     const other = state.players.find((player) => player.inside && !state.votes.some((vote) => vote.playerId === player.id))
@@ -46,18 +46,18 @@ describe('unanimidad', () => {
   })
 
   it('si queda una persona, su voto de salir es unánime', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, (playerId) => (playerId === 0 ? 'continue' : 'exit'))
     state = fleePending(state, () => 'flee')
     expect(state.players.filter((player) => player.inside).map((player) => player.id)).toEqual([0])
-    state = stepRaid(state, [1, 2, 3])
+    state = facedRaid(state, 1)
     state = voteAll(state, 'exit')
     expect(state.phase).toBe('summary')
     expect(state.players[0]?.secured).toHaveLength(2)
   })
 
   it('si todos quieren seguir, el saqueo rota', () => {
-    let state = stepRaid(ready(), [1, 2, 3])
+    let state = facedRaid(ready(), 1)
     state = voteAll(state, 'continue')
     expect(state.phase).toBe('ready')
     expect(state.activePlayerId).toBe(1)
@@ -66,7 +66,7 @@ describe('unanimidad', () => {
 
   it('sin la regla de unanimidad, salir es una salida segura individual', () => {
     const config: GameConfig = { ...gameConfig, unanimousLeave: false }
-    let state = stepRaid(ready(undefined, 1, config), [1, 2, 3])
+    let state = facedRaid(ready(undefined, 1, config), 1)
     state = voteAll(state, (playerId) => (playerId === 0 ? 'exit' : 'continue'))
     expect(state.phase).toBe('ready')
     expect(state.players[0]?.inside).toBe(false)

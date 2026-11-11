@@ -1,22 +1,38 @@
+import type { EVENT_IDS } from '../config'
 import type { GameConfig } from '../config'
 
+export type EventId = (typeof EVENT_IDS)[number]
+
 export interface Bottle {
+  kind: 'bottle'
   id: string
   cepa: string
   /** Incursión en la que se robó. -1 mientras sigue en la bodega. */
   drawnInIncursion: number
 }
 
-export interface Die {
-  /** 1–6, o 0 si ese dado libre todavía no se tira en esta incursión. */
-  value: number
-  locked: boolean
+export interface EventCard {
+  kind: 'event'
+  id: string
+  event: EventId
 }
+
+export type DeckCard = Bottle | EventCard
 
 export type Vote = 'exit' | 'continue'
 export type FlightChoice = 'flee' | 'stay'
+export type CrossroadsChoice = 'take' | 'pass'
 
-export type Phase = 'intro' | 'ready' | 'vote' | 'flight' | 'devil' | 'summary' | 'final'
+export type Phase =
+  | 'intro'
+  | 'ready'
+  | 'crossroads'
+  | 'roll'
+  | 'vote'
+  | 'flight'
+  | 'devil'
+  | 'summary'
+  | 'final'
 
 export type EndReason = 'safe-exit' | 'devil' | 'all-fled' | 'cellar-empty' | 'solo-cap'
 
@@ -42,15 +58,35 @@ export interface Departure {
   lost: Bottle[]
 }
 
+export interface EventResolution {
+  event: EventId
+  diceDelta: number
+  counterDelta: number
+  devil: boolean
+  /** Botellas que el Eco hizo perder, por asiento. */
+  lost: Bottle[][]
+  /** Asiento con el que el Trasiego cambió el botín. null si no hubo cambio. */
+  swapWith: number | null
+  choice: CrossroadsChoice | null
+  extraBottle: Bottle | null
+}
+
 export interface LastRaid {
   playerId: number
-  drawn: Bottle
-  rolls: number[]
-  /** Índices del arreglo de dados que se lanzaron en este saqueo. */
-  rolledIndices: number[]
-  absorbedIndex: number | null
+  card: DeckCard
+  /** null si esta carta no llegó a tirada (Pisada que despierta, o Encrucijada aún sin elegir). */
+  rolls: number[] | null
+  faces: number[]
+  diceBefore: number
+  diceAfter: number
+  countersBefore: number
+  /** Marcas después de la carta y antes de los dados. */
+  countersAfterEvent: number
+  countersAfter: number
+  addedFromSix: boolean
   devil: boolean
-  lockedCount: number
+  devilFrom: 'roll' | 'pisada' | null
+  event: EventResolution | null
 }
 
 export interface IncursionRecord {
@@ -61,7 +97,7 @@ export interface IncursionRecord {
   gained: Bottle[][]
   lost: Bottle[][]
   stainedIds: number[]
-  mystery: Bottle[]
+  mystery: DeckCard[]
 }
 
 export interface ScoreRow {
@@ -89,13 +125,17 @@ export interface GameState {
   config: GameConfig
   seed: number
   rng: { s: number }
-  deck: Bottle[]
+  deck: DeckCard[]
   discard: Bottle[]
   players: PlayerState[]
   incursionIndex: number
   phase: Phase
-  candleLit: boolean
-  dice: Die[]
+  /** Dados en juego, entre minDice y maxDice. */
+  diceCount: number
+  /** Última cara de cada dado. 0 si ese dado todavía no se tira. */
+  faces: number[]
+  /** Marcas del Diablo en esta incursión. */
+  counters: number
   activePlayerId: number
   raidsThisIncursion: number
   soloRaids: number
@@ -109,7 +149,7 @@ export interface GameState {
   history: IncursionRecord[]
   currentRecord: IncursionRecord | null
   lastRaid: LastRaid | null
-  mysteryRevealed: Bottle[]
+  mysteryRevealed: DeckCard[]
   finalScore: FinalScore | null
   raidSerial: number
 }

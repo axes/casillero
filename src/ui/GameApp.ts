@@ -1,11 +1,14 @@
 import { Application, Container } from 'pixi.js'
 import type { GameState } from '../engine'
+import { CellarAmbience } from './ambience'
 import type { Screen, TableApi } from './api'
+import { Atmosphere } from './atmosphere'
 import { FinalScreen } from './final'
 import { SetupScreen } from './setup'
 import { SummaryScreen } from './summary'
 import { TableScreen } from './table'
 import { DESIGN_H, DESIGN_W } from './theme'
+import { makeButton } from './widgets'
 
 export class GameApp implements TableApi {
   state: GameState | null = null
@@ -14,8 +17,14 @@ export class GameApp implements TableApi {
   count = 3
   seedInput = ''
 
+  volumeLabel = 'Sonido'
+
   private readonly pixi = new Application()
   private readonly root = new Container()
+  private readonly screenLayer = new Container()
+  private readonly atmosphere = new Atmosphere()
+  private readonly ambience = new CellarAmbience()
+  private soundButton = new Container()
   private screen: Screen | null = null
   private animateNext = false
 
@@ -33,10 +42,15 @@ export class GameApp implements TableApi {
     })
     this.host.appendChild(this.pixi.canvas)
     this.pixi.stage.addChild(this.root)
+    this.root.addChild(this.screenLayer, this.atmosphere.view)
+    this.layoutSound()
+    this.pixi.ticker.add((ticker) => this.atmosphere.update(ticker.deltaMS / 1000))
+    this.pixi.canvas.addEventListener('pointerdown', () => this.ambience.unlock())
     this.layout()
     window.addEventListener('resize', this.onResize)
     window.addEventListener('keydown', this.onKey)
     this.show()
+    this.setThreat(0)
   }
 
   commit(state: GameState, animate = false): void {
@@ -44,6 +58,7 @@ export class GameApp implements TableApi {
     this.animateNext = animate
     this.busy = animate
     this.show()
+    if (!animate) this.setThreat(state.counters)
   }
 
   goSetup(): void {
@@ -51,6 +66,19 @@ export class GameApp implements TableApi {
     this.state = null
     this.busy = false
     this.show()
+    this.setThreat(0)
+  }
+
+  setThreat(level: number): void {
+    this.atmosphere.setLevel(level)
+    this.ambience.setLevel(level)
+  }
+
+  cycleVolume(): void {
+    this.ambience.unlock()
+    this.ambience.cycleVolume()
+    this.volumeLabel = this.ambience.label()
+    this.layoutSound()
   }
 
   private readonly onResize = (): void => {
@@ -64,9 +92,9 @@ export class GameApp implements TableApi {
   private show(): void {
     this.screen?.destroy()
     this.screen = null
-    this.root.removeChildren()
+    this.screenLayer.removeChildren()
     const layer = new Container()
-    this.root.addChild(layer)
+    this.screenLayer.addChild(layer)
     if (!this.state) {
       this.screen = new SetupScreen(this, layer)
       return
@@ -82,6 +110,14 @@ export class GameApp implements TableApi {
     const animate = this.animateNext
     this.animateNext = false
     this.screen = new TableScreen(this, layer, animate)
+  }
+
+  private layoutSound(): void {
+    this.soundButton.destroy({ children: true })
+    const button = makeButton(this.volumeLabel, 120, () => this.cycleVolume(), 'ghost')
+    button.position.set(168, 12)
+    this.soundButton = button
+    this.root.addChild(button)
   }
 
   private layout(): void {

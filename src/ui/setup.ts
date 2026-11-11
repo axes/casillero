@@ -42,7 +42,7 @@ export class SetupScreen implements Screen {
     subtitle.anchor.set(0.5, 0)
     subtitle.position.set(DESIGN_W / 2, 118)
     const pitch = makeText(
-      'La primera incursión la cubre una vela. Después el vino vale más y el Diablo está más cerca. Hay que juntar 20 puntos entre todos. Gana quien más aseguró, si no lo pilló en la última.',
+      'Entran con un dado. Cada 6 deja una marca; a la tercera aparece el Diablo. Las cartas de la bodega prenden o apagan el ruido. Hay que juntar 14 puntos entre todos.',
       { size: 16, color: palette.creamDim, align: 'center', wrap: 760 },
     )
     pitch.anchor.set(0.5, 0)

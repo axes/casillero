@@ -2,7 +2,10 @@ import gsap from 'gsap'
 import { Container, Graphics, Text } from 'pixi.js'
 import {
   describeDepartures,
+  describeEvent,
   describeRaid,
+  eventRule,
+  eventTitle,
   fleeHint,
   joinNames,
   pointsLabel,
@@ -12,14 +15,17 @@ import {
 import {
   acknowledgeDevil,
   castVote,
+  chooseCrossroads,
   chooseFlight,
   confirmIntro,
-  lockedCount,
+  hasBottle,
   offeringPoints,
   performRaid,
+  performRoll,
   resolveVotes,
   threatBand,
   type Bottle,
+  type DeckCard,
   type GameState,
   type PlayerState,
   type Vote,
@@ -49,8 +55,9 @@ export class TableScreen implements Screen {
   private readonly tokens = new Map<string, Container>()
   private readonly playerAnchors = new Map<number, { x: number; y: number }>()
   private readonly animated: object[] = []
-  private flame: Graphics | null = null
-  private candleNote: Text | null = null
+  private shownCounters = 0
+  private threatNote: Text | null = null
+  private marks: Graphics | null = null
   private hiddenToken: Container | null = null
   private wizard: Wizard = 'pass'
   private voterCursor = 0
@@ -95,16 +102,17 @@ export class TableScreen implements Screen {
     this.dice.length = 0
     this.tokens.clear()
     this.playerAnchors.clear()
-    this.flame = null
-    this.candleNote = null
+    this.threatNote = null
+    this.shownCounters = this.animateRaid && state.lastRaid ? state.lastRaid.countersBefore : state.counters
     this.hiddenToken = null
     this.drawHeader(state)
     this.drawDeck(state)
-    this.drawCandle(state)
+    this.drawCandle()
     this.drawDice(state)
     this.drawPlayers(state)
     if (this.animateRaid && state.lastRaid) {
-      const token = this.tokens.get(state.lastRaid.drawn.id)
+      const revealed = state.lastRaid.card.kind === 'bottle' ? state.lastRaid.card.id : state.lastRaid.event?.extraBottle?.id
+      const token = revealed ? this.tokens.get(revealed) : undefined
       if (token) {
         token.alpha = 0
         this.hiddenToken = token
@@ -158,66 +166,89 @@ export class TableScreen implements Screen {
     this.world.addChild(stack, title, count, discard)
   }
 
-  private drawCandle(state: GameState): void {
-    if (!state.config.candleAbsorbsFirstSix[state.incursionIndex]) return
-    const previewLit = Boolean(this.animateRaid && state.lastRaid?.absorbedIndex !== null)
-    const lit = previewLit || state.candleLit
+  private drawCandle(): void {
     const root = new Container()
     root.position.set(250, 250)
     const g = new Graphics()
-    fillRound(g, -10, 18, 20, 78, 4, palette.cream)
-    fillRound(g, -16, 92, 32, 10, 3, palette.gold)
+    fillRound(g, -8, 20, 16, 70, 4, this.shownCounters >= 2 ? 0xcbbfa6 : palette.cream)
+    fillRound(g, -14, 86, 28, 8, 3, palette.gold)
     root.addChild(g)
-    if (lit) {
-      this.flame = new Graphics()
-      this.flame.ellipse(0, -6, 11, 18).fill({ color: 0xffb347 })
-      this.flame.ellipse(0, -10, 5, 10).fill({ color: 0xfff4d2 })
-      root.addChild(this.flame)
-      this.animated.push(this.flame)
-      if (!reducedMotion) {
-        gsap.to(this.flame, { y: -4, duration: 0.55, yoyo: true, repeat: -1, ease: 'sine.inOut' })
-      }
-    } else {
-      g.circle(0, 8, 4).fill({ color: palette.smoke })
+    const flame = new Graphics()
+    const hot = this.shownCounters >= 2 ? 0xff6a3c : 0xffb347
+    flame.ellipse(0, -2, 8 + this.shownCounters, 14 + this.shownCounters * 2).fill({ color: hot })
+    flame.ellipse(0, -6, 4, 8).fill({ color: 0xfff4d2, alpha: this.shownCounters >= 3 ? 0.4 : 1 })
+    root.addChild(flame)
+    this.animated.push(flame)
+    if (!reducedMotion) {
+      const pace = [0.7, 0.45, 0.28, 0.16][Math.min(this.shownCounters, 3)] ?? 0.5
+      gsap.to(flame, { y: this.shownCounters >= 2 ? -7 : -3, duration: pace, yoyo: true, repeat: -1, ease: 'sine.inOut' })
     }
-    this.candleNote = makeText(lit ? 'La vela está encendida' : 'La vela se apagó', {
-      size: 14,
-      color: lit ? palette.goldSoft : palette.creamDim,
-      align: 'center',
-      wrap: 160,
-    })
-    this.candleNote.anchor.set(0.5, 0)
-    this.candleNote.position.set(0, 112)
-    root.addChild(this.candleNote)
     this.world.addChild(root)
   }
 
   private drawDice(state: GameState): void {
-    const raid = state.lastRaid
+    const raid = this.animateRaid ? state.lastRaid : null
+    const rolling = Boolean(raid?.rolls)
+    const before = raid?.diceBefore ?? state.diceCount
+    const after = state.diceCount
+    const shown = Math.max(before, after, 1)
     const size = 104
     const gap = 18
-    const total = state.dice.length * size + (state.dice.length - 1) * gap
+    const total = shown * size + (shown - 1) * gap
     const start = 760 - total / 2
-    state.dice.forEach((die, index) => {
+    for (let index = 0; index < shown; index += 1) {
       const face = new DieFace(size)
-      const rolling = Boolean(this.animateRaid && raid?.rolledIndices.includes(index))
-      face.show(rolling ? 0 : die.value, rolling ? false : die.locked, !rolling && raid?.absorbedIndex === index)
+      const removed = index >= after
+      const added = index >= before && this.animateRaid
+      const value = removed ? 0 : rolling ? 0 : (state.faces[index] ?? 0)
+      face.show(value, false, false)
       face.view.position.set(start + index * (size + gap), 168)
+      if (added) face.view.scale.set(0.15)
+      if (removed) face.view.alpha = 0.85
       this.world.addChild(face.view)
       this.dice.push(face)
-    })
-    const locked = lockedCount(state.dice)
-    const shownBand = threatBand(locked, state.config.devilAtLockedSixes)
-    const copy = threatCopy(shownBand)
-    const threat = makeText(this.animateRaid ? 'Tirando…' : `${copy.title}. ${copy.line}`, {
+      this.animated.push(face.view, face.view.scale)
+    }
+    this.drawMarks(760, 292)
+    const band = threatBand(this.shownCounters, state.config.devilAtCounters)
+    const copy = threatCopy(band)
+    this.threatNote = makeText(rolling ? 'Tirando…' : `${copy.title}. ${copy.line}`, {
       size: 20,
       font: 'serif',
-      color: !this.animateRaid && shownBand >= 2 ? 0xf0b4b8 : palette.cream,
+      color: !rolling && band >= 2 ? 0xf0b4b8 : palette.cream,
       align: 'center',
     })
-    threat.anchor.set(0.5, 0)
-    threat.position.set(760, 300)
-    this.world.addChild(threat)
+    this.threatNote.anchor.set(0.5, 0)
+    this.threatNote.position.set(760, 330)
+    this.world.addChild(this.threatNote)
+  }
+
+  private drawMarks(center: number, y: number): void {
+    this.marks = new Graphics()
+    this.paintMarks(center, y)
+    this.world.addChild(this.marks)
+  }
+
+  private paintMarks(center: number, y: number): void {
+    const row = this.marks
+    if (!row) return
+    row.clear()
+    for (let index = 0; index < 3; index += 1) {
+      const on = index < this.shownCounters
+      row.circle(center - 36 + index * 36, y, on ? 9 : 7).fill({ color: on ? (index === 2 ? 0xc4313a : palette.gold) : 0x3a2428 })
+      row.circle(center - 36 + index * 36, y, on ? 9 : 7).stroke({ color: palette.gold, width: 1.5, alpha: on ? 1 : 0.4 })
+    }
+  }
+
+  private paintThreat(counters: number): void {
+    this.shownCounters = counters
+    this.api.setThreat(counters)
+    this.paintMarks(760, 292)
+    if (!this.threatNote || !this.api.state) return
+    const band = threatBand(counters, this.api.state.config.devilAtCounters)
+    const copy = threatCopy(band)
+    this.threatNote.text = `${copy.title}. ${copy.line}`
+    this.threatNote.style.fill = band >= 2 ? 0xf0b4b8 : palette.cream
   }
 
   private drawPlayers(state: GameState): void {
@@ -296,78 +327,106 @@ export class TableScreen implements Screen {
   private async playRaid(state: GameState): Promise<void> {
     const raid = state.lastRaid
     if (!raid) return
-    const holder = this.buildCard(raid.drawn, state, false, true)
-    holder.position.set(120, 250)
-    holder.scale.set(0.7)
-    this.fx.addChild(holder)
-    this.animated.push(holder, holder.scale)
-    await Promise.all([
-      tween(holder, { x: 760, y: 250, duration: 0.38, ease: 'power2.out' }),
-      tween(holder.scale, { x: 1, y: 1, duration: 0.38, ease: 'power2.out' }),
-    ])
-    if (this.dead) return
-    await tween(holder.scale, { x: 0, duration: 0.12 })
-    if (this.dead) return
-    holder.removeChildren().forEach((child) => child.destroy({ children: true }))
-    holder.addChild(this.buildCard(raid.drawn, state, true, false))
-    await tween(holder.scale, { x: 1, duration: 0.16 })
-    if (this.dead) return
+    const repeat = raid.event?.choice != null
+    if (!repeat) {
+      const holder = this.buildCard(raid.card, state, false, true)
+      holder.position.set(120, 250)
+      holder.scale.set(0.7)
+      this.fx.addChild(holder)
+      this.animated.push(holder, holder.scale)
+      await Promise.all([
+        tween(holder, { x: 760, y: 250, duration: 0.38, ease: 'power2.out' }),
+        tween(holder.scale, { x: 1, y: 1, duration: 0.38, ease: 'power2.out' }),
+      ])
+      if (this.dead) return
+      await tween(holder.scale, { x: 0, duration: 0.12 })
+      if (this.dead) return
+      holder.removeChildren().forEach((child) => child.destroy({ children: true }))
+      holder.addChild(this.buildCard(raid.card, state, true, false))
+      await tween(holder.scale, { x: 1, duration: 0.16 })
+      if (this.dead) return
+      await this.shiftDice(raid.diceBefore, raid.diceAfter)
+      if (raid.countersAfterEvent !== raid.countersBefore) this.paintThreat(raid.countersAfterEvent)
+      await wait(raid.card.kind === 'event' ? 0.45 : 0.12)
+      if (this.dead) return
+      if (raid.rolls) {
+        await this.tumbleDice(raid.rolls)
+        if (raid.countersAfter !== raid.countersAfterEvent) this.paintThreat(raid.countersAfter)
+      }
+      const anchor = raid.card.kind === 'bottle' ? (this.playerAnchors.get(raid.playerId) ?? { x: 640, y: 600 }) : { x: 760, y: 180 }
+      await tween(holder, { x: anchor.x, y: anchor.y, duration: 0.32, ease: 'power2.inOut' })
+      await tween(holder, { alpha: 0, duration: 0.12 })
+      if (this.hiddenToken) this.hiddenToken.alpha = 1
+      holder.visible = false
+      return
+    }
+    await this.shiftDice(raid.diceBefore, raid.diceAfter)
+    if (raid.rolls) {
+      await this.tumbleDice(raid.rolls)
+      if (raid.countersAfter !== raid.countersBefore) this.paintThreat(raid.countersAfter)
+    }
+    if (this.hiddenToken) this.hiddenToken.alpha = 1
+  }
+
+  private async shiftDice(before: number, after: number): Promise<void> {
+    if (before === after) return
+    const jobs: Promise<void>[] = []
+    this.dice.forEach((face, index) => {
+      if (index >= before && index < after) jobs.push(tween(face.view.scale, { x: 1, y: 1, duration: 0.28, ease: 'back.out(1.6)' }))
+      if (index >= after && index < before) jobs.push(tween(face.view, { alpha: 0, duration: 0.22 }))
+    })
+    await Promise.all(jobs)
+  }
+
+  private async tumbleDice(rolls: readonly number[]): Promise<void> {
     const ticks = reducedMotion ? 1 : 8
     for (let tick = 0; tick < ticks; tick += 1) {
-      for (const index of raid.rolledIndices) {
-        this.dice[index]?.show(((tick + index) % 6) + 1, false, false)
-      }
+      rolls.forEach((finalFace, index) => {
+        const spinning = ((tick + index + finalFace) % 6) + 1
+        this.dice[index]?.show(spinning, false, false)
+      })
       await wait(0.05)
       if (this.dead) return
     }
-    for (const index of raid.rolledIndices) {
-      const die = state.dice[index]
-      if (!die) continue
-      this.dice[index]?.show(die.value, die.locked, raid.absorbedIndex === index)
-    }
-    const locked = lockedCount(state.dice)
-    const note = this.world.children.find((child) => child instanceof Text && child.text.startsWith('Tirando'))
-    if (note instanceof Text) {
-      const copy = threatCopy(threatBand(locked, state.config.devilAtLockedSixes))
-      note.text = `${copy.title}. ${copy.line}`
-    }
-    if (raid.absorbedIndex !== null && this.flame) {
-      await tween(this.flame, { alpha: 0, duration: 0.28 })
-      this.flame.visible = false
-      if (this.candleNote) this.candleNote.text = 'La vela se apagó'
-    }
-    await wait(0.12)
-    if (this.dead) return
-    const anchor = this.playerAnchors.get(raid.playerId) ?? { x: 640, y: 600 }
-    await tween(holder, { x: anchor.x, y: anchor.y, duration: 0.36, ease: 'power2.inOut' })
-    await tween(holder, { alpha: 0, duration: 0.12 })
-    if (this.hiddenToken) this.hiddenToken.alpha = 1
-    holder.visible = false
+    rolls.forEach((face, index) => this.dice[index]?.show(face, face === 6, false))
   }
 
-  private buildCard(bottle: Bottle, state: GameState, faceUp: boolean, centered: boolean): Container {
+  private buildCard(card: DeckCard, state: GameState, faceUp: boolean, centered: boolean): Container {
     const root = new Container()
     const g = new Graphics()
-    const mult = state.config.valueMultiplier[bottle.drawnInIncursion] ?? 1
     if (!faceUp) {
-      fillRound(g, 0, 0, 168, 236, 12, palette.wineDeep)
+      const event = card.kind === 'event'
+      fillRound(g, 0, 0, 168, 236, 12, event ? 0x241018 : palette.wineDeep)
       strokeRound(g, 0, 0, 168, 236, 12, palette.gold, 2)
       g.circle(84, 100, 28).fill({ color: palette.gold })
-      g.circle(84, 100, 16).fill({ color: palette.wine })
-      const seal = makeText('C', { size: 20, font: 'serif', color: palette.goldSoft, weight: '700' })
+      g.circle(84, 100, 16).fill({ color: event ? 0x1a0c10 : palette.wine })
+      const seal = makeText(event ? '?' : 'C', { size: 20, font: 'serif', color: palette.goldSoft, weight: '700' })
       seal.anchor.set(0.5)
       seal.position.set(84, 168)
       root.addChild(g, seal)
-    } else {
+    } else if (card.kind === 'bottle') {
+      const mult = state.config.valueMultiplier[card.drawnInIncursion] ?? 1
       fillRound(g, 0, 0, 168, 236, 12, palette.cream)
       strokeRound(g, 0, 0, 168, 236, 12, palette.gold, 2)
-      const kicker = makeText(wineKind(bottle.drawnInIncursion), { size: 13, color: palette.wine, weight: '700' })
+      const kicker = makeText(wineKind(card.drawnInIncursion), { size: 13, color: palette.wine, weight: '700' })
       kicker.position.set(14, 18)
-      const cepa = makeText(bottle.cepa, { size: 22, font: 'serif', color: palette.ink, weight: '700', wrap: 140 })
+      const cepa = makeText(card.cepa, { size: 22, font: 'serif', color: palette.ink, weight: '700', wrap: 140 })
       cepa.position.set(14, 48)
       const worth = makeText(`Vale ${mult} si la aseguras`, { size: 14, color: 0x6a3a2a, wrap: 140 })
       worth.position.set(14, 150)
       root.addChild(g, kicker, cepa, worth)
+    } else {
+      fillRound(g, 0, 0, 168, 236, 12, 0x1a1014)
+      strokeRound(g, 0, 0, 168, 236, 12, palette.gold, 2)
+      const kicker = makeText('Evento', { size: 12, color: palette.gold, weight: '700' })
+      kicker.position.set(12, 14)
+      const title = makeText(eventTitle(card.event), { size: 22, font: 'serif', color: palette.cream, wrap: 144 })
+      title.position.set(12, 36)
+      const rule = makeText(eventRule(card.event), { size: 14, color: palette.creamDim, wrap: 144 })
+      rule.position.set(12, 92)
+      const effect = makeText(describeEvent(state) ?? '', { size: 13, color: palette.goldSoft, wrap: 144 })
+      effect.position.set(12, 156)
+      root.addChild(g, kicker, title, rule, effect)
     }
     if (centered) root.pivot.set(84, 118)
     return root
@@ -379,6 +438,7 @@ export class TableScreen implements Screen {
     if (!state || this.dead) return
     if (state.phase === 'intro') this.drawIntro(state)
     else if (state.phase === 'ready') this.drawReady(state)
+    else if (state.phase === 'crossroads') this.drawCrossroads(state)
     else if (state.phase === 'vote') this.drawVote(state)
     else if (state.phase === 'flight') this.drawFlight(state)
     else if (state.phase === 'devil') this.drawDevil(state)
@@ -387,12 +447,10 @@ export class TableScreen implements Screen {
   private drawIntro(state: GameState): void {
     const name = state.config.incursionNames[state.incursionIndex] ?? 'la incursión'
     const mult = state.config.valueMultiplier[state.incursionIndex] ?? 1
-    const candle = state.config.candleAbsorbsFirstSix[state.incursionIndex] === true
-    const locked = state.config.startLocked[state.incursionIndex] ?? 0
-    let line = `${wineKind(state.incursionIndex)}. Cada botella de esta incursión vale ${mult}.`
-    if (candle) line += ' La vela se come el primer 6: ese dado no se bloquea y, mientras siga encendida, no puede salir el 666.'
-    else if (locked > 0) line += ' Ya hay un 6 bloqueado. Se juega con dos dados. El Diablo ya escuchó.'
-    else line += ' Tres dados libres. Todo 6 natural se bloquea.'
+    const marks = state.counters
+    let line = `${wineKind(state.incursionIndex)}. Cada botella vale ${mult}. Entran con ${state.diceCount === 1 ? 'un dado' : `${state.diceCount} dados`}.`
+    if (marks > 0) line += ' Ya hay una marca: el Diablo escuchó algo. Un 6 suma otra, nunca más de una por tirada.'
+    else line += ' La primera tirada no puede despertarlo. Un 6 deja una sola marca, aunque salgan varios.'
     const copy = makeText(line, { size: 16, color: palette.cream, align: 'center', wrap: 620 })
     copy.anchor.set(0.5, 0)
     copy.position.set(760, 348)
@@ -405,7 +463,7 @@ export class TableScreen implements Screen {
   }
 
   private drawReady(state: GameState): void {
-    const banner = describeDepartures(state) ?? describeRaid(state) ?? 'El saqueo es de una botella. Después votan quienes siguen dentro.'
+    const banner = describeDepartures(state) ?? describeRaid(state) ?? 'Roban una carta. Si es botella, queda expuesta. Si es evento, se resuelve y después se tira.'
     const copy = makeText(banner, { size: 16, color: palette.cream, align: 'center', wrap: 640 })
     copy.anchor.set(0.5, 0)
     copy.position.set(760, 348)
@@ -469,7 +527,7 @@ export class TableScreen implements Screen {
       .join('   ·   ')
     const stakes = makeText(stake, { size: 15, color: palette.goldSoft, wrap: 680 })
     stakes.position.set(36, 176)
-    const threat = threatCopy(threatBand(lockedCount(state.dice), state.config.devilAtLockedSixes))
+    const threat = threatCopy(threatBand(state.counters, state.config.devilAtCounters))
     const context = makeText(
       `Ofrenda ${offeringPoints(state)} / ${state.config.offeringThreshold}. ${threat.line} Tú tienes en juego: ${pointsLabel(player.exposed, state.config)}.`,
       { size: 16, color: palette.creamDim, wrap: 680 },
@@ -611,13 +669,13 @@ export class TableScreen implements Screen {
     line.anchor.set(0.5, 0)
     line.position.set(DESIGN_W / 2, 156)
     const diceRow = new Container()
-    state.dice.forEach((die, index) => {
+    state.faces.forEach((faceValue, index) => {
       const face = new DieFace(86)
-      face.show(die.value, true, false)
+      face.show(faceValue, faceValue === 6, false)
       face.view.position.set(index * 108, 0)
       diceRow.addChild(face.view)
     })
-    const rowWidth = Math.max(state.dice.length - 1, 0) * 108 + 86
+    const rowWidth = Math.max(state.faces.length - 1, 0) * 108 + 86
     diceRow.position.set((DESIGN_W - rowWidth) / 2, 214)
     const losses = state.players
       .filter((player) => player.inside)
@@ -649,7 +707,42 @@ export class TableScreen implements Screen {
       veil.alpha = 1
       title.scale.set(1)
     }
+    if (!state.lastRaid?.rolls) diceRow.visible = false
     this.chrome.addChild(veil, panel, title, line, diceRow, body, button)
+  }
+
+  private drawCrossroads(state: GameState): void {
+    const card = this.modal(760, 460)
+    const actor = state.players[state.activePlayerId]
+    const title = makeText('Encrucijada', { size: 34, font: 'serif', color: palette.gold })
+    title.position.set(36, 28)
+    const body = makeText(
+      `${actor?.name ?? 'Quien roba'}, elige. Tomar es una botella más y un dado. Pasar deja el sótano como está. Después igual se tira.`,
+      { size: 18, color: palette.cream, wrap: 680 },
+    )
+    body.position.set(36, 90)
+    const canTake = hasBottle(state)
+    const take = makeButton(
+      canTake ? 'Tomar botella y sumar un dado' : 'No quedan botellas',
+      680,
+      () => {
+        if (canTake) this.answerCrossroads('take')
+      },
+      'gold',
+    )
+    take.alpha = canTake ? 1 : 0.45
+    const pass = makeButton('Pasar', 680, () => this.answerCrossroads('pass'), 'wine')
+    take.position.set(40, 250)
+    pass.position.set(40, 330)
+    card.addChild(title, body, take, pass)
+  }
+
+  private answerCrossroads(choice: 'take' | 'pass'): void {
+    if (this.resolving || !this.api.state || this.api.state.phase !== 'crossroads') return
+    this.resolving = true
+    let next = chooseCrossroads(this.api.state, choice)
+    if (next.phase === 'roll') next = performRoll(next)
+    this.api.commit(next, true)
   }
 
   private modal(width: number, height: number): Container {

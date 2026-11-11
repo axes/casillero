@@ -34,7 +34,7 @@ export class SummaryScreen implements Screen {
     const mystery =
       record.mystery.length === 0
         ? 'Botellas misteriosas: ninguna en este prototipo.'
-        : `Botellas misteriosas: ${record.mystery.map((bottle) => bottle.cepa).join(', ')}.`
+        : `Botellas misteriosas: ${record.mystery.map((card) => (card.kind === 'bottle' ? card.cepa : card.event)).join(', ')}.`
     const mysteryText = makeText(mystery, { size: 16, color: palette.creamDim, wrap: 780 })
     mysteryText.position.set(72, 640)
 

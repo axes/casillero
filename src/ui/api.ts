@@ -14,4 +14,7 @@ export interface TableApi {
   seedInput: string
   commit(state: GameState, animate?: boolean): void
   goSetup(): void
+  setThreat(level: number): void
+  cycleVolume(): void
+  volumeLabel: string
 }

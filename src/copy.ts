@@ -1,4 +1,4 @@
-import type { EndReason, FinalScore, GameState } from './engine'
+import type { EndReason, EventId, FinalScore, GameState } from './engine'
 import { pilePoints } from './engine'
 
 const WINE_KIND = ['Vino joven', 'Reserva', 'Gran reserva'] as const
@@ -50,14 +50,111 @@ export function endShort(reason: EndReason): string {
   }
 }
 
+export function eventTitle(event: EventId): string {
+  switch (event) {
+    case 'ruido':
+      return 'Ruido'
+    case 'barricaCae':
+      return 'Barrica cae'
+    case 'silencio':
+      return 'Silencio'
+    case 'vela':
+      return 'Vela'
+    case 'eco':
+      return 'Eco'
+    case 'encrucijada':
+      return 'Encrucijada'
+    case 'pisada':
+      return 'Pisada'
+    case 'trasiego':
+      return 'Trasiego'
+  }
+}
+
+export function eventRule(event: EventId): string {
+  switch (event) {
+    case 'ruido':
+      return 'Suma un dado. No se puede pasar de tres.'
+    case 'barricaCae':
+      return 'Suma dos dados. No se puede pasar de tres.'
+    case 'silencio':
+      return 'Quita un dado. Siempre queda al menos uno.'
+    case 'vela':
+      return 'Si hay una marca, la apaga. Si no hay, quita un dado.'
+    case 'eco':
+      return 'Quien sigue dentro con dos o más botellas expuestas pierde una.'
+    case 'encrucijada':
+      return 'Quien roba elige: una botella más y un dado, o pasar.'
+    case 'pisada':
+      return 'Suma una marca. Si llega a tres, el Diablo aparece al tiro, sin tirar.'
+    case 'trasiego':
+      return 'Si alguien tiene más botellas expuestas que quien roba, cambian el botín.'
+  }
+}
+
+function diceWord(count: number): string {
+  return count === 1 ? '1 dado' : `${count} dados`
+}
+
+export function describeEvent(state: GameState): string | null {
+  const raid = state.lastRaid
+  const resolution = raid?.event
+  if (!raid || !resolution) return null
+  const name = state.players[raid.playerId]?.name ?? 'Alguien'
+  switch (resolution.event) {
+    case 'ruido':
+    case 'barricaCae':
+      if (resolution.diceDelta === 0) return 'Ya estaban en tres dados. Esto no suma más.'
+      return resolution.event === 'ruido'
+        ? `El sótano se inquieta. Ahora hay ${diceWord(raid.diceAfter)}.`
+        : `La barrica se viene abajo. De ${raid.diceBefore} pasan a ${diceWord(raid.diceAfter)}.`
+    case 'silencio':
+      return resolution.diceDelta === 0
+        ? 'Ya había un solo dado. El silencio no cambia nada.'
+        : `El sótano se calma. Queda ${diceWord(raid.diceAfter)}.`
+    case 'vela':
+      if (resolution.counterDelta < 0) return `La vela apaga una marca. El Diablo queda en ${raid.countersAfterEvent}.`
+      if (resolution.diceDelta < 0) return `No había marca. La vela apaga un dado. Queda ${diceWord(raid.diceAfter)}.`
+      return 'No había marca y ya quedaba un dado. La vela no cambia nada.'
+    case 'eco': {
+      const losses = resolution.lost.flatMap((pile, playerId) =>
+        pile.map((bottle) => `${state.players[playerId]?.name ?? 'Alguien'} pierde un ${bottle.cepa}`),
+      )
+      return losses.length > 0 ? `${losses.join('. ')}.` : 'Nadie tenía dos botellas expuestas. El eco no se lleva nada.'
+    }
+    case 'encrucijada':
+      if (resolution.choice === 'take' && resolution.extraBottle) {
+        return `${name} se lleva un ${resolution.extraBottle.cepa} y ahora hay ${diceWord(raid.diceAfter)}.`
+      }
+      if (resolution.choice === 'pass') return `${name} pasa. Los dados siguen igual.`
+      return `${name}, ¿te llevas otra botella y un dado, o pasas?`
+    case 'pisada':
+      return resolution.devil
+        ? 'Una pisada. Con eso el Diablo despierta, sin tirar.'
+        : `Una pisada en la oscuridad. El Diablo queda en ${raid.countersAfterEvent}.`
+    case 'trasiego': {
+      if (resolution.swapWith === null) return `Nadie tenía más que ${name}. El trasiego no mueve nada.`
+      const other = state.players[resolution.swapWith]?.name ?? 'alguien'
+      return `${name} y ${other} cambian el botín expuesto.`
+    }
+  }
+}
+
 export function describeRaid(state: GameState): string | null {
   const raid = state.lastRaid
   if (!raid) return null
   const name = state.players[raid.playerId]?.name ?? 'Alguien'
-  const faces = raid.rolls.join(', ')
-  let line = `${name} robó un ${raid.drawn.cepa}. Dados: ${faces}.`
-  if (raid.absorbedIndex !== null) line += ' La vela se comió un 6.'
-  if (raid.devil) line += ' Tres seises: despierta el Diablo.'
+  if (raid.card.kind === 'event') {
+    const effect = describeEvent(state)
+    const faces = raid.rolls ? ` Dados: ${raid.rolls.join(', ')}.` : ''
+    const mark = raid.addedFromSix ? ' Salió un 6: una marca más.' : ''
+    const devil = raid.devil && raid.devilFrom === 'roll' ? ' El Diablo aparece.' : ''
+    return `${eventTitle(raid.card.event)}. ${effect ?? ''}${faces}${mark}${devil}`
+  }
+  const faces = raid.rolls ? raid.rolls.join(', ') : 'sin tirada'
+  let line = `${name} robó un ${raid.card.cepa}. Dados: ${faces}.`
+  if (raid.addedFromSix) line += ' Salió un 6: una marca más.'
+  if (raid.devil) line += ' El Diablo aparece.'
   return line
 }
 
