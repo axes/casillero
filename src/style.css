@@ -1,0 +1,24 @@
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  background: #14080c;
+  overflow: hidden;
+}
+
+body {
+  color: #f3e6c8;
+  font-family: 'Source Sans 3', 'Segoe UI', sans-serif;
+}
+
+#app {
+  position: relative;
+}
+
+#boot-error {
+  max-width: 36rem;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  line-height: 1.5;
+}
