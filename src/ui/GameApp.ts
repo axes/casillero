@@ -1,12 +1,12 @@
 import { Application, Container } from 'pixi.js'
-import type { GameState } from '../engine'
+import { pressureLevel, type GameState } from '../engine'
 import { CellarAmbience } from './ambience'
 import type { Screen, TableApi } from './api'
 import { Atmosphere } from './atmosphere'
+import { CurtainScreen } from './curtain'
 import { FinalScreen } from './final'
+import { NightScreen } from './night'
 import { SetupScreen } from './setup'
-import { SummaryScreen } from './summary'
-import { TableScreen } from './table'
 import { DESIGN_H, DESIGN_W } from './theme'
 import { makeButton } from './widgets'
 
@@ -58,7 +58,7 @@ export class GameApp implements TableApi {
     this.animateNext = animate
     this.busy = animate
     this.show()
-    if (!animate) this.setThreat(state.counters)
+    this.syncThreat()
   }
 
   goSetup(): void {
@@ -66,7 +66,17 @@ export class GameApp implements TableApi {
     this.state = null
     this.busy = false
     this.show()
-    this.setThreat(0)
+    this.syncThreat()
+  }
+
+  private syncThreat(): void {
+    const state = this.state
+    if (!state) {
+      this.setThreat(0)
+      return
+    }
+    const devil = state.phase === 'devil' || state.nightEnd?.reason === 'six'
+    this.setThreat(pressureLevel(state.round, state.diceCount, devil))
   }
 
   setThreat(level: number): void {
@@ -99,8 +109,8 @@ export class GameApp implements TableApi {
       this.screen = new SetupScreen(this, layer)
       return
     }
-    if (this.state.phase === 'summary') {
-      this.screen = new SummaryScreen(this, layer)
+    if (this.state.phase === 'curtain') {
+      this.screen = new CurtainScreen(this, layer)
       return
     }
     if (this.state.phase === 'final') {
@@ -109,7 +119,7 @@ export class GameApp implements TableApi {
     }
     const animate = this.animateNext
     this.animateNext = false
-    this.screen = new TableScreen(this, layer, animate)
+    this.screen = new NightScreen(this, layer, animate)
   }
 
   private layoutSound(): void {

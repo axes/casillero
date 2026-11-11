@@ -34,7 +34,7 @@ export class SetupScreen implements Screen {
     })
     title.anchor.set(0.5, 0)
     title.position.set(DESIGN_W / 2, 36)
-    const subtitle = makeText('Entran juntos, roban vino y salen antes del 666.', {
+    const subtitle = makeText('Entran de noche. Un 6 y los descubren.', {
       size: 20,
       color: palette.cream,
       align: 'center',
@@ -42,7 +42,7 @@ export class SetupScreen implements Screen {
     subtitle.anchor.set(0.5, 0)
     subtitle.position.set(DESIGN_W / 2, 118)
     const pitch = makeText(
-      'Entran con un dado. Cada 6 deja una marca; a la tercera aparece el Diablo. Las cartas de la bodega prenden o apagan el ruido. Hay que juntar 14 puntos entre todos.',
+      'Cuatro noches en la cava. Cada quien roba de su pila y decide si sigue. Un 6 y el Diablo se lleva lo de esa noche. Desde la segunda, se atacan con cartas ocultas.',
       { size: 16, color: palette.creamDim, align: 'center', wrap: 760 },
     )
     pitch.anchor.set(0.5, 0)

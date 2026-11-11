@@ -1,124 +1,130 @@
 /**
- * Valores del prototipo digital v0.3.
- * El motor lee esta configuración: la vista no debe repetir estos números.
- * Fuente: docs/casillero-reglas-v0.3.md
- * candleAbsorbsFirstSix y startLocked quedan apagados: la vela ahora es una carta.
+ * Prototipo digital v0.4.
+ * Fuente: docs/casillero-reglas-v0.4.md
+ * El diseñador cerró tres preguntas abiertas: 4 noches, el 6 pierde lo expuesto,
+ * y el empate se comparte (tiebreakLeftoverPile en false).
  */
-export interface EventSpec {
+export interface DiceEventSpec {
   count: number
   addDice?: number
   removeDice?: number
-  removeCounterOrDie?: boolean
-  loseExposedIfAtLeast?: number
-  choiceBottleAndDie?: boolean
-  addCounter?: number
-  swapWithRichestExposed?: boolean
+  persistent?: boolean
 }
 
 export interface GameConfig {
   playersMin: number
   playersMax: number
-  incursions: number
-  /** Dados con los que entra cada incursión. */
-  startDice: readonly number[]
+  nights: number
+  maxRoundsPerNight: number
+  startDice: number
   minDice: number
   maxDice: number
-  devilAtCounters: number
-  /** Tope de marcas que una tirada puede sumar, aunque salgan varios 6. */
-  maxCountersPerRoll: number
-  /** Marcas del Diablo al entrar a cada incursión. */
-  startCounters: readonly number[]
-  valueMultiplier: readonly number[]
-  incursionNames: readonly string[]
-  offeringThreshold: number
-  fleePenalty: number
-  unanimousLeave: boolean
-  lastIncursionDevilIneligible: boolean
-  rotateFirstActorEachIncursion: boolean
-  discardLostBottles: boolean
-  /** Botellas de la bodega. No vuelven si se pierden. */
-  bottleCount: number
-  /** Al empezar cada incursión se reponen las 12 cartas de evento. */
-  eventsRestockEachIncursion: boolean
+  sharedDie: boolean
+  sixEndsNight: boolean
+  devilCounters: boolean
+  exposedLostOnSix: boolean
+  autoBankAfterLastRound: boolean
+  simultaneousDraw: boolean
+  personalPiles: boolean
+  pileSizeByPlayers: Readonly<Record<'3' | '4' | '5' | '6', number>>
+  bodegaSize: number
+  loot: Readonly<Record<'1' | '2' | '3', number>>
   events: {
-    ruido: EventSpec
-    barricaCae: EventSpec
-    silencio: EventSpec
-    vela: EventSpec
-    eco: EventSpec
-    encrucijada: EventSpec
-    pisada: EventSpec
-    trasiego: EventSpec
+    ruido: DiceEventSpec
+    barricaCae: DiceEventSpec
+    silencio: DiceEventSpec
+    guardia: DiceEventSpec
   }
-  /** Heredado de v0.2. En v0.3 no se usa: la vela es una carta. */
-  candleAbsorbsFirstSix: boolean
-  /** Heredado de v0.2. En v0.3 los dados no se bloquean. */
-  startLocked: readonly number[]
-  soloSaqueoCap: number | null
-  mysteryBottles: number
-  /** Dobles y triples. Apagado: el caos entra por los eventos. */
-  specialDiceEffects: boolean
+  actions: {
+    deckSize: number
+    drawAfterEachNightExceptLast: boolean
+    handLimit: number
+    playFromNight: number
+    playsPerNight: number
+    cards: {
+      saqueo: number
+      quebranto: number
+      trasiego: number
+      delacion: number
+      alarma: number
+      tranca: number
+      escondite: number
+      vistazo: number
+      sombra: number
+    }
+  }
+  tiebreakLeftoverPile: boolean
+  curtainShowsScores: boolean
+  rotateFirstPlayer: boolean
+  offeringThreshold: number | null
+  lastIncursionDevilIneligible: boolean
 }
 
 export const gameConfig = {
   playersMin: 3,
   playersMax: 6,
-  incursions: 3,
-  startDice: [1, 1, 1],
+  nights: 4,
+  maxRoundsPerNight: 3,
+  startDice: 1,
   minDice: 1,
   maxDice: 3,
-  devilAtCounters: 3,
-  maxCountersPerRoll: 1,
-  startCounters: [0, 1, 1],
-  valueMultiplier: [1, 2, 3],
-  incursionNames: ['Las tinajas', 'Las cavas', 'La sacristía'],
-  offeringThreshold: 14,
-  fleePenalty: 1,
-  unanimousLeave: true,
-  lastIncursionDevilIneligible: true,
-  rotateFirstActorEachIncursion: true,
-  discardLostBottles: true,
-  bottleCount: 40,
-  eventsRestockEachIncursion: true,
+  sharedDie: true,
+  sixEndsNight: true,
+  devilCounters: false,
+  exposedLostOnSix: true,
+  autoBankAfterLastRound: true,
+  simultaneousDraw: true,
+  personalPiles: true,
+  pileSizeByPlayers: { 3: 20, 4: 15, 5: 12, 6: 10 },
+  bodegaSize: 60,
+  loot: { 1: 24, 2: 16, 3: 10 },
   events: {
-    ruido: { count: 3, addDice: 1 },
+    ruido: { count: 4, addDice: 1 },
     barricaCae: { count: 2, addDice: 2 },
     silencio: { count: 2, removeDice: 1 },
-    vela: { count: 1, removeCounterOrDie: true },
-    eco: { count: 1, loseExposedIfAtLeast: 2 },
-    encrucijada: { count: 1, choiceBottleAndDie: true },
-    pisada: { count: 1, addCounter: 1 },
-    trasiego: { count: 1, swapWithRichestExposed: true },
+    guardia: { count: 2, addDice: 1, persistent: true },
   },
-  candleAbsorbsFirstSix: false,
-  startLocked: [0, 0, 0],
-  soloSaqueoCap: null,
-  mysteryBottles: 0,
-  specialDiceEffects: false,
+  actions: {
+    deckSize: 30,
+    drawAfterEachNightExceptLast: true,
+    handLimit: 3,
+    playFromNight: 2,
+    playsPerNight: 1,
+    cards: {
+      saqueo: 5,
+      quebranto: 4,
+      trasiego: 3,
+      delacion: 4,
+      alarma: 2,
+      tranca: 3,
+      escondite: 3,
+      vistazo: 3,
+      sombra: 3,
+    },
+  },
+  tiebreakLeftoverPile: false,
+  curtainShowsScores: true,
+  rotateFirstPlayer: true,
+  offeringThreshold: null,
+  lastIncursionDevilIneligible: false,
 } as const satisfies GameConfig
 
-export const CEPAS = [
-  'Carmenère',
-  'Cabernet',
-  'País',
-  'Syrah',
-  'Cinsault',
-  'Carignan',
-  'Merlot',
-  'Moscatel',
-  'Semillón',
-  'Chardonnay',
-  'Sauvignon',
-  'Pedro Jiménez',
+export const LOOT_NAMES = {
+  1: 'Vino joven',
+  2: 'Reserva',
+  3: 'Gran reserva',
+} as const
+
+export const ACTION_IDS = [
+  'saqueo',
+  'quebranto',
+  'trasiego',
+  'delacion',
+  'alarma',
+  'tranca',
+  'escondite',
+  'vistazo',
+  'sombra',
 ] as const
 
-export const EVENT_IDS = [
-  'ruido',
-  'barricaCae',
-  'silencio',
-  'vela',
-  'eco',
-  'encrucijada',
-  'pisada',
-  'trasiego',
-] as const
+export const EVENT_IDS = ['ruido', 'barricaCae', 'silencio', 'guardia'] as const

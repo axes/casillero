@@ -1,437 +1,128 @@
-import { EVENT_IDS, gameConfig, type GameConfig } from '../config'
-import { makeBottleDeck, restockDeck } from './deck'
-import { countersFromRoll } from './dice'
-import { adjustDice, pullFirstBottle, resolveEvent } from './events'
-import { splitFlight } from './flight'
+import { gameConfig, type GameConfig } from '../config'
+import { addDice, applyAction, canAnswerWithTranca, isTheft, removeDice, targetsPlayer } from './actions'
+import { dealActions, dealPiles } from './deck'
+import { rollHasSix } from './dice'
 import { nextInt, normalizeSeed, rngFromSeed } from './rng'
 import { scoreGame } from './score'
 import type {
-  Bottle,
-  CastVote,
-  CrossroadsChoice,
-  DeckCard,
-  Departure,
-  EndReason,
-  EventResolution,
-  FlightChoice,
+  ActionCard,
+  ActionPayload,
+  BodegaEventCard,
   GameState,
-  IncursionRecord,
-  LastRaid,
+  LeaveChoice,
+  LootCard,
+  NightEndReason,
+  PendingAction,
   PlayerState,
-  Vote,
 } from './types'
 
 function draft(state: GameState): GameState {
   return structuredClone(state)
 }
 
-function playerAt(state: GameState, playerId: number): PlayerState {
-  const player = state.players[playerId]
-  if (!player || player.id !== playerId) {
-    throw new Error('Ese asiento no está en la mesa.')
-  }
+function seatOrder(state: GameState): number[] {
+  const count = state.players.length
+  return Array.from({ length: count }, (_, step) => (state.firstPlayerId + step) % count)
+}
+
+function playerAt(state: GameState, id: number): PlayerState {
+  const player = state.players[id]
+  if (!player || player.id !== id) throw new Error('Ese asiento no está.')
   return player
 }
 
-function insidePlayers(state: GameState): PlayerState[] {
-  return state.players.filter((player) => player.inside)
+function insideIds(state: GameState): number[] {
+  return state.players.filter((player) => player.inside).map((player) => player.id)
 }
 
-function orderFrom(players: readonly PlayerState[], startId: number, include: (player: PlayerState) => boolean): number[] {
-  const ids: number[] = []
-  const count = players.length
-  for (let step = 0; step < count; step += 1) {
-    const id = (startId + step) % count
-    const player = players[id]
-    if (player && include(player)) ids.push(player.id)
-  }
-  return ids
+function bankPlayer(player: PlayerState): LootCard[] {
+  const taken = player.exposed
+  player.exposed = []
+  player.secured = [...player.secured, ...taken]
+  return taken
 }
 
-function nextInsideId(players: readonly PlayerState[], fromId: number): number | null {
-  const count = players.length
-  for (let step = 1; step <= count; step += 1) {
-    const id = (fromId + step) % count
-    if (players[id]?.inside) return id
-  }
-  return null
+function discardExposed(state: GameState, player: PlayerState): LootCard[] {
+  const lost = player.exposed
+  player.exposed = []
+  state.lootDiscard = [...state.lootDiscard, ...lost]
+  return lost
 }
 
-function startingPlayerId(state: GameState): number {
-  if (!state.config.rotateFirstActorEachIncursion) return 0
-  return state.incursionIndex % state.players.length
-}
-
-function buryBottles(state: GameState, bottles: readonly Bottle[]): void {
-  if (bottles.length === 0) return
-  if (state.config.discardLostBottles) {
-    state.discard.push(...bottles)
-    return
-  }
-  state.deck.push(...bottles)
-}
-
-function emptyPiles(count: number): Bottle[][] {
-  return Array.from({ length: count }, () => [])
-}
-
-function giveSecured(state: GameState, player: PlayerState, bottles: Bottle[]): void {
-  if (bottles.length === 0) return
-  player.secured = [...player.secured, ...bottles]
-  const gained = state.gainedThisIncursion[player.id] ?? []
-  state.gainedThisIncursion[player.id] = [...gained, ...bottles]
-}
-
-function markLost(state: GameState, playerId: number, bottles: Bottle[]): void {
-  if (bottles.length === 0) return
-  const lost = state.lostThisIncursion[playerId] ?? []
-  state.lostThisIncursion[playerId] = [...lost, ...bottles]
-  buryBottles(state, bottles)
-}
-
-function secureInside(state: GameState): GameState {
-  for (const player of state.players) {
-    if (!player.inside || player.exposed.length === 0) continue
-    const taken = player.exposed
-    player.exposed = []
-    giveSecured(state, player, taken)
-  }
-  return state
-}
-
-function drawMystery(state: GameState): DeckCard[] {
-  const revealed: DeckCard[] = []
-  for (let index = 0; index < state.config.mysteryBottles && state.deck.length > 0; index += 1) {
-    const card = state.deck[0]
-    if (!card) break
-    state.deck = state.deck.slice(1)
-    revealed.push(card)
-    if (card.kind === 'bottle') state.discard.push({ ...card })
-  }
-  state.mysteryRevealed = revealed.map((card) => ({ ...card }))
-  return state.mysteryRevealed.map((card) => ({ ...card }))
-}
-
-function finishIncursion(state: GameState, reason: EndReason): GameState {
-  const mystery = drawMystery(state)
-  const record: IncursionRecord = {
-    index: state.incursionIndex,
-    name: state.config.incursionNames[state.incursionIndex] ?? `Incursión ${state.incursionIndex + 1}`,
-    reason,
-    raids: state.raidsThisIncursion,
-    gained: state.gainedThisIncursion.map((pile) => pile.slice()),
-    lost: state.lostThisIncursion.map((pile) => pile.slice()),
-    stainedIds: state.stainedThisIncursion.slice(),
-    mystery,
-  }
-  state.history = [...state.history, record]
-  state.currentRecord = record
-  state.phase = 'summary'
+function endNight(state: GameState, reason: NightEndReason, lost: LootCard[][], sombraSaved: number[]): GameState {
+  state.nightEnd = { reason, lost, sombraSaved }
+  state.phase = reason === 'six' ? 'devil' : 'night-end'
   state.votes = []
-  state.pendingFlight = []
+  state.pending = null
   return state
 }
 
-function applyDevil(state: GameState): GameState {
-  const lastIncursion = state.incursionIndex === state.config.incursions - 1
+function loseOrSaveInside(state: GameState): { lost: LootCard[][]; sombraSaved: number[] } {
+  const lost = state.players.map(() => [] as LootCard[])
+  const sombraSaved: number[] = []
   for (const player of state.players) {
     if (!player.inside) continue
-    if (player.exposed.length > 0) {
-      const lost = player.exposed
-      player.exposed = []
-      markLost(state, player.id, lost)
-    }
-    if (lastIncursion && state.config.lastIncursionDevilIneligible) {
-      player.stained = true
-      if (!state.stainedThisIncursion.includes(player.id)) {
-        state.stainedThisIncursion.push(player.id)
-      }
+    if (player.sombra) {
+      bankPlayer(player)
+      sombraSaved.push(player.id)
+    } else if (state.config.exposedLostOnSix) {
+      lost[player.id] = discardExposed(state, player)
+    } else {
+      bankPlayer(player)
     }
   }
-  state.phase = 'devil'
-  return state
+  return { lost, sombraSaved }
 }
 
-function blankRaid(state: GameState, card: DeckCard, event: EventResolution | null): LastRaid {
-  return {
-    playerId: state.activePlayerId,
-    card,
-    rolls: null,
-    faces: state.faces.slice(),
-    diceBefore: state.diceCount,
-    diceAfter: state.diceCount,
-    countersBefore: state.counters,
-    countersAfterEvent: state.counters,
-    countersAfter: state.counters,
-    addedFromSix: false,
-    devil: false,
-    devilFrom: null,
-    event,
-  }
-}
-
-function setupIncursion(state: GameState): GameState {
-  const index = state.incursionIndex
-  const stocked = restockDeck(state.rng, state.deck, index, state.config)
-  state.rng = stocked.rng
-  state.deck = stocked.deck
-  state.diceCount = state.config.startDice[index] ?? state.config.minDice
-  state.faces = Array.from({ length: state.diceCount }, () => 0)
-  state.counters = state.config.startCounters[index] ?? 0
-  state.activePlayerId = startingPlayerId(state)
-  state.raidsThisIncursion = 0
-  state.soloRaids = 0
-  state.votes = []
-  state.revealedVotes = []
-  state.pendingFlight = []
-  state.departures = []
-  state.gainedThisIncursion = emptyPiles(state.players.length)
-  state.lostThisIncursion = emptyPiles(state.players.length)
-  state.stainedThisIncursion = []
-  state.currentRecord = null
-  state.lastRaid = null
-  state.mysteryRevealed = []
-  state.phase = 'intro'
+function bankInside(state: GameState): void {
   for (const player of state.players) {
-    player.inside = true
-    player.exposed = []
+    if (player.inside) bankPlayer(player)
   }
-  return state
+}
+
+function resolveBodegaEvent(state: GameState, card: BodegaEventCard): void {
+  const spec = state.config.events[card.event]
+  if (card.event === 'silencio') {
+    removeDice(state, spec.removeDice ?? 1)
+    return
+  }
+  addDice(state, spec.addDice ?? 0, spec.persistent === true)
 }
 
 function validateConfig(config: GameConfig): void {
-  if (!Number.isInteger(config.playersMin) || !Number.isInteger(config.playersMax)) {
-    throw new Error('El rango de jugadores no es válido.')
-  }
-  if (config.playersMin < 1 || config.playersMax < config.playersMin) {
-    throw new Error('El rango de jugadores no es válido.')
-  }
-  if (!Number.isInteger(config.incursions) || config.incursions < 1) {
-    throw new Error('La partida necesita al menos una incursión.')
-  }
-  if (!Number.isInteger(config.minDice) || !Number.isInteger(config.maxDice) || config.minDice < 1 || config.maxDice < config.minDice) {
-    throw new Error('El rango de dados no es válido.')
-  }
-  if (!Number.isInteger(config.devilAtCounters) || config.devilAtCounters < 1) {
-    throw new Error('El umbral del Diablo no es válido.')
-  }
-  if (!Number.isInteger(config.maxCountersPerRoll) || config.maxCountersPerRoll < 1) {
-    throw new Error('El tope de marcas por tirada no es válido.')
-  }
-  const parallel = [config.startDice, config.startCounters, config.valueMultiplier, config.incursionNames]
-  if (parallel.some((list) => list.length !== config.incursions)) {
-    throw new Error('La curva de incursiones no está completa en la config.')
-  }
-  for (let index = 0; index < config.incursions; index += 1) {
-    const dice = config.startDice[index] ?? -1
-    if (!Number.isInteger(dice) || dice < config.minDice || dice > config.maxDice) {
-      throw new Error('startDice queda fuera del rango.')
-    }
-    const counters = config.startCounters[index] ?? -1
-    if (!Number.isInteger(counters) || counters < 0 || counters >= config.devilAtCounters) {
-      throw new Error('La incursión no puede empezar con el Diablo despierto.')
-    }
-    const multiplier = config.valueMultiplier[index] ?? -1
-    if (!Number.isInteger(multiplier) || multiplier < 0) {
-      throw new Error('El valor del vino no es válido.')
-    }
-  }
-  if (!Number.isInteger(config.offeringThreshold) || config.offeringThreshold < 0) {
-    throw new Error('La ofrenda no es válida.')
-  }
-  if (!Number.isInteger(config.fleePenalty) || config.fleePenalty < 0) {
-    throw new Error('La pena de huida no es válida.')
-  }
-  if (!Number.isInteger(config.bottleCount) || config.bottleCount < 1) {
-    throw new Error('La bodega necesita botellas.')
-  }
-  for (const id of EVENT_IDS) {
-    const count = config.events[id].count
-    if (!Number.isInteger(count) || count < 0) throw new Error('El mazo de eventos no es válido.')
-  }
-  if (config.soloSaqueoCap !== null && (!Number.isInteger(config.soloSaqueoCap) || config.soloSaqueoCap < 0)) {
-    throw new Error('El tope de saqueo en solitario no es válido.')
-  }
-  if (!Number.isInteger(config.mysteryBottles) || config.mysteryBottles < 0) {
-    throw new Error('Las botellas misteriosas no son válidas.')
-  }
+  if (config.nights < 1 || config.maxRoundsPerNight < 1) throw new Error('La partida necesita noches y rondas.')
+  if (config.minDice < 1 || config.maxDice < config.minDice) throw new Error('El rango de dados no es válido.')
+  if (config.startDice < config.minDice || config.startDice > config.maxDice) throw new Error('El dado inicial no cabe.')
+  const loot = config.loot['1'] + config.loot['2'] + config.loot['3']
+  const events = config.events.ruido.count + config.events.barricaCae.count + config.events.silencio.count + config.events.guardia.count
+  if (loot + events !== config.bodegaSize) throw new Error('La bodega no suma sus cartas.')
+  const actionTotal = Object.values(config.actions.cards).reduce((sum, count) => sum + count, 0)
+  if (actionTotal !== config.actions.deckSize) throw new Error('Las acciones no suman el mazo.')
+  if (config.actions.handLimit < 1 || config.actions.playsPerNight < 1) throw new Error('La mano de acciones no es válida.')
 }
 
-function autoEnd(state: GameState): GameState | null {
-  if (state.phase !== 'ready') return null
-  const inside = insidePlayers(state)
-  const cap = state.config.soloSaqueoCap
-  if (cap !== null && inside.length === 1 && state.soloRaids >= cap) {
-    return finishIncursion(secureInside(state), 'solo-cap')
+function advanceActionTurn(state: GameState): void {
+  const count = state.players.length
+  const current = state.actionTurn
+  if (current === null) throw new Error('Nadie está jugando acciones.')
+  const next = (current + 1) % count
+  if (next === state.firstPlayerId) {
+    state.actionTurn = null
+    state.phase = 'ready'
+    return
   }
-  if (state.deck.length === 0) {
-    return finishIncursion(secureInside(state), 'cellar-empty')
-  }
-  return null
+  state.actionTurn = next
+  state.phase = 'actions'
 }
 
-function rememberDice(raid: LastRaid, state: GameState): void {
-  raid.diceAfter = state.diceCount
-  raid.faces = state.faces.slice()
-  raid.countersAfterEvent = state.counters
-  raid.countersAfter = state.counters
-}
-
-/** Roba la carta de arriba y la resuelve. La tirada, si corresponde, viene después. */
-export function beginRaid(state: GameState): GameState {
-  if (state.phase !== 'ready') throw new Error('No es momento de saquear.')
-  const ended = autoEnd(draft(state))
-  if (ended) return ended
-
-  const next = draft(state)
-  next.departures = []
-  next.revealedVotes = []
-  const top = next.deck[0]
-  if (!top) return finishIncursion(secureInside(next), 'cellar-empty')
-  next.deck = next.deck.slice(1)
-  const player = playerAt(next, next.activePlayerId)
-  if (!player.inside) throw new Error('Quien roba ya no está en la incursión.')
-
-  const diceBefore = next.diceCount
-  const countersBefore = next.counters
-  next.raidsThisIncursion += 1
-  if (insidePlayers(next).length === 1) next.soloRaids += 1
-  next.raidSerial += 1
-  next.votes = []
-
-  if (top.kind === 'bottle') {
-    const drawn: Bottle = { ...top, drawnInIncursion: next.incursionIndex }
-    player.exposed = [...player.exposed, drawn]
-    const raid = blankRaid(next, drawn, null)
-    raid.diceBefore = diceBefore
-    raid.countersBefore = countersBefore
-    rememberDice(raid, next)
-    next.lastRaid = raid
-    next.phase = 'roll'
-    return next
-  }
-
-  const resolution = resolveEvent(next, top.event, next.config)
-  const raid = blankRaid(next, top, resolution)
-  raid.diceBefore = diceBefore
-  raid.countersBefore = countersBefore
-  rememberDice(raid, next)
-  next.lastRaid = raid
-  if (resolution.devil) {
-    raid.devil = true
-    raid.devilFrom = 'pisada'
-    return applyDevil(next)
-  }
-  if (top.event === 'encrucijada') {
-    next.phase = 'crossroads'
-    return next
-  }
-  next.phase = 'roll'
-  return next
-}
-
-export function chooseCrossroads(state: GameState, choice: CrossroadsChoice): GameState {
-  if (state.phase !== 'crossroads') throw new Error('Nadie está en la encrucijada.')
-  if (choice !== 'take' && choice !== 'pass') throw new Error('Esa elección no se entiende.')
-  const next = draft(state)
-  const raid = next.lastRaid
-  if (!raid?.event || raid.event.event !== 'encrucijada') throw new Error('No hay encrucijada.')
-  const player = playerAt(next, next.activePlayerId)
-  if (choice === 'take') {
-    const bottle = pullFirstBottle(next)
-    if (!bottle) throw new Error('No queda una botella para llevarse.')
-    player.exposed = [...player.exposed, bottle]
-    const spec = next.config.events.encrucijada
-    const diceDelta = adjustDice(next, spec.addDice ?? 1)
-    raid.event = { ...raid.event, choice, extraBottle: bottle, diceDelta }
-    raid.card = { ...raid.card }
-  } else {
-    raid.event = { ...raid.event, choice: 'pass' }
-  }
-  rememberDice(raid, next)
-  next.lastRaid = raid
-  next.phase = 'roll'
-  return next
-}
-
-export function resolveRoll(state: GameState, rolls: readonly number[]): GameState {
-  if (state.phase !== 'roll') throw new Error('Ahora no se tiran los dados.')
-  if (rolls.length !== state.diceCount) {
-    throw new Error('La cantidad de dados no calza con los que están en juego.')
-  }
-  const next = draft(state)
-  const gained = countersFromRoll(rolls, next.config.maxCountersPerRoll)
-  if (next.config.specialDiceEffects) {
-    // Reservado. v0.3 no traduce dobles ni triples.
-  }
-  next.counters = Math.min(next.config.devilAtCounters, next.counters + gained)
-  next.faces = [...rolls]
-  const raid = next.lastRaid
-  if (raid) {
-    raid.rolls = [...rolls]
-    raid.faces = [...rolls]
-    raid.addedFromSix = gained > 0
-    raid.countersAfter = next.counters
-    raid.diceAfter = next.diceCount
-  }
-  if (next.counters >= next.config.devilAtCounters) {
-    if (raid) {
-      raid.devil = true
-      raid.devilFrom = 'roll'
-    }
-    return applyDevil(next)
-  }
-  next.phase = 'vote'
-  return next
-}
-
-export function performRoll(state: GameState): GameState {
-  if (state.phase !== 'roll') throw new Error('Ahora no se tiran los dados.')
-  let rng = state.rng
-  const rolls: number[] = []
-  for (let index = 0; index < state.diceCount; index += 1) {
-    const face = nextInt(rng, 1, 6)
-    rng = face.rng
-    rolls.push(face.value)
-  }
-  const rolled = resolveRoll({ ...state, rng }, rolls)
-  return rolled
-}
-
-/** Roba y, si no hay que elegir ni apareció el Diablo, tira los dados. */
-export function performRaid(state: GameState): GameState {
-  const drawn = beginRaid(state)
-  if (drawn.phase !== 'roll') return drawn
-  return performRoll(drawn)
-}
-
-/**
- * Saqueo con las caras ya decididas.
- * Si la carta es Encrucijada, hay que pasar la elección.
- * Si el Diablo aparece antes de tirar, `rolls` va vacío.
- */
-export function stepRaid(state: GameState, rolls: readonly number[], choice?: CrossroadsChoice): GameState {
-  let next = beginRaid(state)
-  if (next.phase === 'crossroads') {
-    if (!choice) throw new Error('Encrucijada espera una elección.')
-    next = chooseCrossroads(next, choice)
-  } else if (choice) {
-    throw new Error('No hay encrucijada.')
-  }
-  if (next.phase === 'devil' || next.phase === 'summary') {
-    if (rolls.length > 0) throw new Error('No hubo tirada.')
-    return next
-  }
-  if (next.phase !== 'roll') throw new Error('El saqueo no llegó a los dados.')
-  return resolveRoll(next, rolls)
-}
-
-function leaveSafely(state: GameState, player: PlayerState): Departure {
-  const taken = player.exposed
-  player.exposed = []
-  giveSecured(state, player, taken)
-  player.inside = false
-  return { playerId: player.id, kind: 'safe-leave', lost: [] }
+function spend(state: GameState, player: PlayerState, cardId: string): ActionCard {
+  const index = player.hand.findIndex((card) => card.id === cardId)
+  if (index < 0) throw new Error('Esa carta no está en la mano.')
+  const card = player.hand[index]
+  if (!card) throw new Error('Esa carta no está en la mano.')
+  player.hand = player.hand.filter((held) => held.id !== cardId)
+  state.actionDiscard = [...state.actionDiscard, card]
+  return card
 }
 
 export function createGame(names: readonly string[], seed: number, config: GameConfig = gameConfig): GameState {
@@ -440,188 +131,302 @@ export function createGame(names: readonly string[], seed: number, config: GameC
   if (trimmed.length < config.playersMin || trimmed.length > config.playersMax) {
     throw new Error(`La mesa es de ${config.playersMin} a ${config.playersMax} jugadores.`)
   }
-  if (trimmed.some((name) => name.length === 0)) {
-    throw new Error('Cada quien necesita un nombre.')
-  }
+  if (trimmed.some((name) => name.length === 0)) throw new Error('Cada quien necesita un nombre.')
 
   const normalized = normalizeSeed(seed)
   let rng = rngFromSeed(normalized)
-  const built = makeBottleDeck(rng, config)
-  rng = built.rng
-  const players: PlayerState[] = trimmed.map((name, id) => ({
-    id,
-    name,
-    exposed: [],
-    secured: [],
-    inside: true,
-    stained: false,
-  }))
-
+  const piles = dealPiles(rng, config, trimmed.length)
+  rng = piles.rng
+  const actions = dealActions(rng, config)
+  rng = actions.rng
   const state: GameState = {
     config: structuredClone(config) as GameConfig,
     seed: normalized,
     rng,
-    deck: built.deck,
-    discard: [],
-    players,
-    incursionIndex: 0,
-    phase: 'intro',
-    diceCount: config.minDice,
+    piles: piles.piles,
+    actionDeck: actions.deck,
+    actionDiscard: [],
+    lootDiscard: [],
+    players: trimmed.map((name, id) => ({
+      id,
+      name,
+      exposed: [],
+      secured: [],
+      hand: [],
+      inside: true,
+      escondite: false,
+      sombra: false,
+    })),
+    nightIndex: 0,
+    round: 0,
+    phase: 'curtain',
+    firstPlayerId: 0,
+    actionTurn: null,
+    diceCount: config.startDice,
+    guardiaDice: 0,
     faces: [],
-    counters: 0,
-    activePlayerId: 0,
-    raidsThisIncursion: 0,
-    soloRaids: 0,
+    pending: null,
+    peek: null,
     votes: [],
-    revealedVotes: [],
-    pendingFlight: [],
-    departures: [],
-    gainedThisIncursion: emptyPiles(players.length),
-    lostThisIncursion: emptyPiles(players.length),
-    stainedThisIncursion: [],
-    history: [],
-    currentRecord: null,
-    lastRaid: null,
-    mysteryRevealed: [],
+    lastDrawn: [],
+    lastRoll: null,
+    nightEnd: null,
+    trimQueue: [],
     finalScore: null,
-    raidSerial: 0,
   }
-  return setupIncursion(state)
+  return state
 }
 
-export function confirmIntro(state: GameState): GameState {
-  if (state.phase !== 'intro') throw new Error('La incursión ya empezó.')
+export function enterNight(state: GameState): GameState {
+  if (state.phase !== 'curtain') throw new Error('La cortina no está cerrada.')
   const next = draft(state)
-  next.phase = 'ready'
+  const count = next.players.length
+  next.firstPlayerId = next.config.rotateFirstPlayer ? next.nightIndex % count : 0
+  next.round = 0
+  next.diceCount = next.config.startDice
+  next.guardiaDice = 0
+  next.faces = []
+  next.votes = []
+  next.lastDrawn = []
+  next.lastRoll = null
+  next.nightEnd = null
+  next.pending = null
+  next.peek = null
+  for (const player of next.players) {
+    player.inside = true
+    player.exposed = []
+    player.escondite = false
+    player.sombra = false
+  }
+  if (next.nightIndex + 1 >= next.config.actions.playFromNight) {
+    next.phase = 'actions'
+    next.actionTurn = next.firstPlayerId
+  } else {
+    next.phase = 'ready'
+    next.actionTurn = null
+  }
   return next
 }
 
-export function castVote(state: GameState, playerId: number, vote: Vote): GameState {
-  if (state.phase !== 'vote') throw new Error('Ahora no se vota.')
-  if (vote !== 'exit' && vote !== 'continue') throw new Error('Voto desconocido.')
+export function passAction(state: GameState, playerId: number): GameState {
+  if (state.phase !== 'actions' || state.actionTurn !== playerId) throw new Error('No es el turno de esa acción.')
   const next = draft(state)
-  const player = playerAt(next, playerId)
-  if (!player.inside) throw new Error('Quien ya salió no vota.')
-  if (next.votes.some((cast) => cast.playerId === playerId)) {
-    throw new Error('Ese voto ya está.')
+  advanceActionTurn(next)
+  return next
+}
+
+export function playAction(state: GameState, playerId: number, cardId: string, payload: ActionPayload = {}): GameState {
+  if (state.phase !== 'actions' || state.actionTurn !== playerId) throw new Error('No es el turno de esa acción.')
+  const next = draft(state)
+  const actor = playerAt(next, playerId)
+  const card = actor.hand.find((held) => held.id === cardId)
+  if (!card) throw new Error('Esa carta no está en la mano.')
+  if (card.action === 'tranca') throw new Error('La tranca se juega cuando te apuntan.')
+  const targetId = payload.targetId
+  if (targetsPlayer(card.action) && targetId !== undefined && isTheft(card.action)) {
+    const target = playerAt(next, targetId)
+    if (target.escondite) throw new Error('Está escondido: no se le roba, ni se le quiebra, ni se le traspasa.')
   }
-  next.votes = [...next.votes, { playerId, vote }]
+  spend(next, actor, cardId)
+  if (targetId !== undefined && targetsPlayer(card.action) && canAnswerWithTranca(next, targetId)) {
+    next.pending = { actorId: playerId, card, payload }
+    next.phase = 'tranca'
+    return next
+  }
+  applyAction(next, playerId, card, payload)
+  if (next.peek) {
+    next.phase = 'peek'
+    return next
+  }
+  advanceActionTurn(next)
+  return next
+}
+
+export function respondTranca(state: GameState, use: boolean): GameState {
+  if (state.phase !== 'tranca' || !state.pending) throw new Error('Nadie te está apuntando.')
+  const next = draft(state)
+  const pending: PendingAction = next.pending!
+  const target = playerAt(next, pending.payload.targetId ?? -1)
+  if (use) {
+    const tranca = target.hand.find((card) => card.action === 'tranca')
+    if (!tranca) throw new Error('No tienes tranca.')
+    spend(next, target, tranca.id)
+    next.pending = null
+    next.peek = null
+    advanceActionTurn(next)
+    return next
+  }
+  applyAction(next, pending.actorId, pending.card, pending.payload)
+  next.pending = null
+  if (next.peek) {
+    next.phase = 'peek'
+    return next
+  }
+  advanceActionTurn(next)
+  return next
+}
+
+export function acknowledgePeek(state: GameState): GameState {
+  if (state.phase !== 'peek') throw new Error('Nadie está mirando una mano.')
+  const next = draft(state)
+  next.peek = null
+  advanceActionTurn(next)
+  return next
+}
+
+export function drawRound(state: GameState): GameState {
+  if (state.phase !== 'ready') throw new Error('No es momento de robar.')
+  if (!state.config.simultaneousDraw || !state.config.personalPiles) {
+    throw new Error('Esta versión roba a la vez, cada quien de su pila.')
+  }
+  const next = draft(state)
+  next.round += 1
+  next.lastRoll = null
+  const drawn = []
+  for (const id of seatOrder(next)) {
+    const person = playerAt(next, id)
+    if (!person.inside) continue
+    const pile = next.piles[id] ?? []
+    const card = pile[0]
+    if (!card) continue
+    next.piles[id] = pile.slice(1)
+    drawn.push({ playerId: id, card })
+    if (card.kind === 'loot') person.exposed = [...person.exposed, card]
+  }
+  for (const item of drawn) {
+    if (item.card.kind === 'event') resolveBodegaEvent(next, item.card)
+  }
+  next.lastDrawn = drawn
+  if (next.round >= next.config.maxRoundsPerNight && next.config.autoBankAfterLastRound) {
+    bankInside(next)
+    return endNight(next, 'auto-bank', next.players.map(() => []), [])
+  }
+  next.votes = []
+  next.phase = 'vote'
+  return next
+}
+
+export function castVote(state: GameState, playerId: number, choice: LeaveChoice): GameState {
+  if (state.phase !== 'vote') throw new Error('Ahora no se decide si seguir.')
+  if (choice !== 'leave' && choice !== 'stay') throw new Error('Esa decisión no se entiende.')
+  const next = draft(state)
+  const person = playerAt(next, playerId)
+  if (!person.inside) throw new Error('Quien ya salió no decide.')
+  if (next.votes.some((vote) => vote.playerId === playerId)) throw new Error('Esa decisión ya está.')
+  next.votes = [...next.votes, { playerId, choice }]
   return next
 }
 
 export function resolveVotes(state: GameState): GameState {
-  if (state.phase !== 'vote') throw new Error('Ahora no se cierra la votación.')
+  if (state.phase !== 'vote') throw new Error('Ahora no se cierra la decisión.')
   const next = draft(state)
-  const inside = insidePlayers(next)
-  if (inside.length === 0) throw new Error('No queda nadie dentro.')
-  if (inside.some((player) => !next.votes.some((cast) => cast.playerId === player.id))) {
-    throw new Error('Falta el voto de alguien que sigue dentro.')
+  const inside = next.players.filter((person) => person.inside)
+  if (inside.some((person) => !next.votes.some((vote) => vote.playerId === person.id))) {
+    throw new Error('Falta la decisión de alguien que sigue dentro.')
   }
-
-  const revealed = inside.map((player) => {
-    const cast = next.votes.find((entry) => entry.playerId === player.id)
-    if (!cast) throw new Error('Falta un voto.')
-    return cast
-  })
-  const voteOf = (playerId: number): Vote => {
-    const cast = revealed.find((entry) => entry.playerId === playerId)
-    if (!cast) throw new Error('Falta un voto.')
-    return cast.vote
+  for (const person of inside) {
+    const vote = next.votes.find((entry) => entry.playerId === person.id)
+    if (vote?.choice === 'leave') {
+      bankPlayer(person)
+      person.inside = false
+    }
   }
-
-  next.revealedVotes = revealed
   next.votes = []
-
-  const everyoneExits = inside.every((player) => voteOf(player.id) === 'exit')
-  if (next.config.unanimousLeave && everyoneExits) {
-    return finishIncursion(secureInside(next), 'safe-exit')
-  }
-
-  if (!next.config.unanimousLeave) {
-    const departures: Departure[] = []
-    for (const player of inside) {
-      if (voteOf(player.id) !== 'exit') continue
-      departures.push(leaveSafely(next, player))
-    }
-    next.departures = departures
-    if (insidePlayers(next).length === 0) {
-      return finishIncursion(next, 'safe-exit')
-    }
-    const following = nextInsideId(next.players, next.activePlayerId)
-    if (following === null) return finishIncursion(next, 'safe-exit')
-    next.activePlayerId = following
-    next.phase = 'ready'
-    return next
-  }
-
-  const exiters = orderFrom(next.players, next.activePlayerId, (player) => player.inside && voteOf(player.id) === 'exit')
-  if (exiters.length === 0) {
-    const following = nextInsideId(next.players, next.activePlayerId)
-    if (following === null) throw new Error('No queda nadie para el siguiente saqueo.')
-    next.activePlayerId = following
-    next.phase = 'ready'
-    next.departures = []
-    return next
-  }
-
-  next.pendingFlight = exiters
-  next.phase = 'flight'
-  next.departures = []
+  if (insideIds(next).length === 0) return endNight(next, 'all-left', next.players.map(() => []), [])
+  next.phase = 'roll'
   return next
 }
 
-export function chooseFlight(state: GameState, playerId: number, choice: FlightChoice): GameState {
-  if (state.phase !== 'flight') throw new Error('Nadie está huyendo ahora.')
-  if (choice !== 'flee' && choice !== 'stay') throw new Error('Esa huida no se entiende.')
+export function resolveRoll(state: GameState, rolls: readonly number[]): GameState {
+  if (state.phase !== 'roll') throw new Error('Ahora no se tira el dado.')
+  if (!state.config.sharedDie) throw new Error('El dado de esta versión es compartido.')
+  if (rolls.length !== state.diceCount) throw new Error('La cantidad de dados no calza.')
   const next = draft(state)
-  const expected = next.pendingFlight[0]
-  if (expected !== playerId) throw new Error('Le toca decidir a otra persona.')
-  next.pendingFlight = next.pendingFlight.slice(1)
-  const player = playerAt(next, playerId)
-  if (!player.inside) throw new Error('Esa persona ya no está dentro.')
-
-  if (choice === 'flee') {
-    const split = splitFlight(next.rng, player.exposed, next.config.fleePenalty)
-    next.rng = split.rng
-    player.exposed = []
-    giveSecured(next, player, split.kept)
-    markLost(next, player.id, split.lost)
-    player.inside = false
-    next.departures = [...next.departures, { playerId, kind: 'flee', lost: split.lost }]
-  } else {
-    next.departures = [...next.departures, { playerId, kind: 'stay', lost: [] }]
+  const six = rollHasSix(rolls)
+  next.faces = [...rolls]
+  next.lastRoll = { rolls: [...rolls], six }
+  if (six && next.config.sixEndsNight) {
+    const outcome = loseOrSaveInside(next)
+    return endNight(next, 'six', outcome.lost, outcome.sombraSaved)
   }
-
-  if (next.pendingFlight.length > 0) return next
-  if (insidePlayers(next).length === 0) return finishIncursion(next, 'all-fled')
-  const following = nextInsideId(next.players, next.activePlayerId)
-  if (following === null) return finishIncursion(next, 'all-fled')
-  next.activePlayerId = following
   next.phase = 'ready'
   return next
 }
 
-export function acknowledgeDevil(state: GameState): GameState {
-  if (state.phase !== 'devil') throw new Error('El Diablo no está en escena.')
-  return finishIncursion(draft(state), 'devil')
-}
-
-export function continueAfterSummary(state: GameState): GameState {
-  if (state.phase !== 'summary') throw new Error('La incursión todavía no cierra.')
-  const next = draft(state)
-  if (next.incursionIndex + 1 >= next.config.incursions) {
-    next.finalScore = scoreGame(next)
-    next.phase = 'final'
-    return next
+export function performRoll(state: GameState): GameState {
+  if (state.phase !== 'roll') throw new Error('Ahora no se tira el dado.')
+  let rng = state.rng
+  const rolls: number[] = []
+  for (let index = 0; index < state.diceCount; index += 1) {
+    const face = nextInt(rng, 1, 6)
+    rng = face.rng
+    rolls.push(face.value)
   }
-  next.incursionIndex += 1
-  return setupIncursion(next)
+  const next = draft(state)
+  next.rng = rng
+  next.phase = 'roll'
+  return resolveRoll(next, rolls)
 }
 
-export function voteFor(votes: readonly CastVote[], playerId: number): Vote | null {
-  return votes.find((cast) => cast.playerId === playerId)?.vote ?? null
+export function acknowledgeDevil(state: GameState): GameState {
+  if (state.phase !== 'devil' || !state.nightEnd) throw new Error('El Diablo no está en escena.')
+  const next = draft(state)
+  next.phase = 'night-end'
+  return next
 }
 
-export function hasBottle(state: GameState): boolean {
-  return state.deck.some((card) => card.kind === 'bottle')
+function openNextNight(state: GameState): GameState {
+  if (state.nightIndex + 1 >= state.config.nights) {
+    state.finalScore = scoreGame(state)
+    state.phase = 'final'
+    return state
+  }
+  state.nightIndex += 1
+  state.round = 0
+  state.diceCount = state.config.startDice
+  state.guardiaDice = 0
+  state.faces = []
+  state.phase = 'curtain'
+  state.nightEnd = null
+  state.lastDrawn = []
+  state.lastRoll = null
+  return state
+}
+
+export function continueAfterNight(state: GameState): GameState {
+  if (state.phase !== 'night-end') throw new Error('La noche no ha cerrado.')
+  const next = draft(state)
+  const last = next.nightIndex + 1 >= next.config.nights
+  if (!last && next.config.actions.drawAfterEachNightExceptLast) {
+    for (const id of seatOrder(next)) {
+      const card = next.actionDeck[0]
+      if (!card) break
+      next.actionDeck = next.actionDeck.slice(1)
+      const person = playerAt(next, id)
+      person.hand = [...person.hand, card]
+    }
+    const queue = seatOrder(next).filter((id) => playerAt(next, id).hand.length > next.config.actions.handLimit)
+    if (queue.length > 0) {
+      next.trimQueue = queue
+      next.phase = 'trim'
+      return next
+    }
+  }
+  return openNextNight(next)
+}
+
+export function discardDown(state: GameState, playerId: number, dropIds: readonly string[]): GameState {
+  if (state.phase !== 'trim' || state.trimQueue[0] !== playerId) throw new Error('No te toca descartar.')
+  const next = draft(state)
+  const person = playerAt(next, playerId)
+  const extra = person.hand.length - next.config.actions.handLimit
+  if (dropIds.length !== extra) throw new Error('Hay que descartar justo lo que sobra.')
+  for (const id of dropIds) spend(next, person, id)
+  next.trimQueue = next.trimQueue.slice(1)
+  if (next.trimQueue.length > 0) return next
+  return openNextNight(next)
+}
+
+export function playerPoints(cards: readonly LootCard[]): number {
+  return cards.reduce((sum, card) => sum + card.points, 0)
 }
